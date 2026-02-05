@@ -22,6 +22,21 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
+// Advanced UI: Skeleton Loader Component
+const SkeletonCard = () => (
+  <div className="border rounded-[2rem] p-7 bg-white/5 border-white/10 animate-pulse">
+    <div className="flex justify-between mb-4">
+      <div className="h-4 w-24 bg-white/10 rounded-full"></div>
+      <div className="h-4 w-4 bg-white/10 rounded"></div>
+    </div>
+    <div className="space-y-3">
+      <div className="h-3 w-full bg-white/5 rounded"></div>
+      <div className="h-3 w-5/6 bg-white/5 rounded"></div>
+      <div className="h-3 w-4/6 bg-white/5 rounded"></div>
+    </div>
+  </div>
+);
+
 function App() {
   const [user, setUser] = useState(null);
   const [topic, setTopic] = useState('');
@@ -35,7 +50,6 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [usage, setUsage] = useState({ current: 0, limit: 5 });
 
-  // 1. Auth Observer
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -59,6 +73,7 @@ function App() {
   const handleGenerate = async () => {
     if (!topic || !user) return;
     setLoading(true);
+    setContent(''); // Clear previous results while loading
     try {
       const response = await axios.post('http://localhost:5000/api/generate', { 
         topic, 
@@ -100,6 +115,12 @@ function App() {
     }
   };
 
+  const handleCopyAll = () => {
+    const allText = platformCards.map(p => `${p.name.toUpperCase()}\n${p.body}`).join('\n\n---\n\n');
+    navigator.clipboard.writeText(allText);
+    alert("Full strategy copied to clipboard!");
+  };
+
   const parseContent = (text) => {
     const platforms = [
       { id: 'linkedin', name: 'LinkedIn', icon: <Linkedin className="w-4 h-4 text-[#0A66C2]" />, marker: "|||LINKEDIN|||" },
@@ -124,7 +145,6 @@ function App() {
   return (
     <div className={`min-h-screen transition-colors duration-500 font-sans ${isDarkMode ? 'bg-[#030712] text-slate-200' : 'bg-slate-50 text-slate-900'}`}>
       
-      {/* HISTORY MODAL */}
       {showHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
           <div className={`${isDarkMode ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200'} border w-full max-w-2xl rounded-[2rem] overflow-hidden flex flex-col max-h-[80vh]`}>
@@ -136,7 +156,7 @@ function App() {
               <input 
                 type="text" 
                 placeholder="Search your history..." 
-                className={`w-full p-3 rounded-xl border ${isDarkMode ? 'bg-black/40 border-white/10' : 'bg-slate-100 border-slate-200'}`}
+                className={`w-full p-3 rounded-xl border ${isDarkMode ? 'bg-black/40 border-white/10 text-white' : 'bg-slate-100 border-slate-200 text-slate-900'}`}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -153,7 +173,6 @@ function App() {
         </div>
       )}
 
-      {/* HEADER */}
       <div className="max-w-7xl mx-auto px-6 py-10">
         <header className={`flex justify-between items-center mb-12 border-b ${isDarkMode ? 'border-white/5' : 'border-slate-200'} pb-6`}>
           <div className="flex items-center gap-3">
@@ -170,9 +189,9 @@ function App() {
                     <div className="h-full bg-indigo-500 transition-all" style={{ width: `${(usage.current / usage.limit) * 100}%` }} />
                   </div>
                 </div>
-                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 rounded-xl border border-white/10">{isDarkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5 text-indigo-600" />}</button>
-                <button onClick={() => fetchHistory()} className="p-2.5 rounded-xl border border-white/10"><History className="w-5 h-5" /></button>
-                <button onClick={handleLogout} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-xl text-xs font-bold hover:bg-red-500/20">Logout</button>
+                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 rounded-xl border border-white/10 transition-colors hover:bg-white/5">{isDarkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5 text-indigo-600" />}</button>
+                <button onClick={() => fetchHistory()} className="p-2.5 rounded-xl border border-white/10 transition-colors hover:bg-white/5"><History className="w-5 h-5" /></button>
+                <button onClick={handleLogout} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all">Logout</button>
               </>
             ) : (
               <button onClick={handleLogin} className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/20">Login</button>
@@ -180,17 +199,15 @@ function App() {
           </div>
         </header>
 
-        {/* MAIN BODY */}
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Lock className="w-16 h-16 text-indigo-500/20 mb-6" />
             <h2 className="text-4xl font-bold mb-4">Ready to Create?</h2>
-            <p className="text-slate-500 mb-8">Login with Google to start generating multi-platform content plans.</p>
-            <button onClick={handleLogin} className="px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:scale-105 transition-all">Sign In with Google</button>
+            <p className="text-slate-500 mb-8 text-center max-w-md">Login with Google to start generating multi-platform content plans in seconds.</p>
+            <button onClick={handleLogin} className="px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:scale-105 transition-all shadow-xl shadow-indigo-500/20">Sign In with Google</button>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-            {/* Input Sidebar */}
             <div className="lg:col-span-4">
               <div className={`p-8 rounded-[2rem] sticky top-10 border ${isDarkMode ? 'bg-slate-900/40 border-white/10' : 'bg-white border-slate-200 shadow-xl'}`}>
                 <div className="mb-6">
@@ -201,33 +218,56 @@ function App() {
                     <option value="Sarcastic">Sarcastic</option>
                   </select>
                 </div>
-                <textarea className={`w-full border rounded-2xl p-5 outline-none mb-6 min-h-[150px] ${isDarkMode ? 'bg-black/40 border-white/5 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="What are we talking about today?" value={topic} onChange={(e) => setTopic(e.target.value)} />
-                <button onClick={handleGenerate} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-500 py-4.5 rounded-xl font-bold text-white transition-all disabled:opacity-50">
-                  {loading ? "Igniting Engine..." : "Generate Plan"}
+                <textarea className={`w-full border rounded-2xl p-5 outline-none mb-6 min-h-[150px] transition-all focus:ring-2 focus:ring-indigo-500/20 ${isDarkMode ? 'bg-black/40 border-white/5 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="What are we talking about today?" value={topic} onChange={(e) => setTopic(e.target.value)} />
+                <button onClick={handleGenerate} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-500 py-4.5 rounded-xl font-bold text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  {loading ? (
+                    <><Sparkles className="w-4 h-4 animate-spin" /> Igniting Engine...</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> Generate </>
+                  )}
                 </button>
               </div>
             </div>
 
-            {/* Results Grid */}
             <div className="lg:col-span-8">
-              {platformCards.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-6">
-                  {platformCards.map((p) => (
-                    <div key={p.id} className={`border rounded-[2rem] p-7 ${isDarkMode ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200 shadow-md'}`}>
-                      <div className="flex justify-between items-center mb-4">
-                        <div className="flex items-center gap-2">{p.icon} <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span></div>
-                        <button onClick={() => { navigator.clipboard.writeText(p.body); setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); }}>
-                          {copiedId === p.id ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-slate-500" />}
-                        </button>
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
+                </div>
+              ) : platformCards.length > 0 ? (
+                <div className="space-y-6">
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={handleCopyAll}
+                      className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> Copy Full Strategy
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in">
+                    {platformCards.map((p) => (
+                      <div key={p.id} className={`border rounded-[2rem] p-7 transition-all hover:translate-y-[-4px] ${isDarkMode ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200 shadow-md'}`}>
+                        <div className="flex justify-between items-center mb-4">
+                          <div className="flex items-center gap-2">
+                            {p.icon} 
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] text-slate-600 font-mono">{p.body.length} chars</span>
+                            <button onClick={() => { navigator.clipboard.writeText(p.body); setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); }}>
+                              {copiedId === p.id ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-slate-500 hover:text-indigo-400" />}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-sm leading-relaxed whitespace-pre-wrap">{p.body}</div>
                       </div>
-                      <div className="text-sm leading-relaxed whitespace-pre-wrap">{p.body}</div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="h-full min-h-[400px] border-2 border-dashed border-white/5 rounded-[3rem] flex flex-col items-center justify-center text-slate-600">
                   <LayoutDashboard className="w-12 h-12 mb-4 opacity-10" />
-                  <p>Your multi-platform strategy will appear here.</p>
+                  <p className="font-medium">Enter a topic and hit generate to begin.</p>
                 </div>
               )}
             </div>

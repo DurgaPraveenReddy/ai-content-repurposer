@@ -20,7 +20,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
-// 1. GENERATE WITH LIMITS
+// 1. GENERATE WITH DAILY LIMIT RESET
 app.post("/api/generate", async (req, res) => {
   try {
     const { topic, style, uid, email } = req.body;
@@ -30,14 +30,27 @@ app.post("/api/generate", async (req, res) => {
     // Find user or create if new
     let user = await User.findOne({ uid });
     if (!user) {
-      user = await User.create({ uid, email });
+      user = await User.create({ uid, email, lastReset: new Date() });
     }
 
-    // Check Limit
+    // --- DAILY RESET LOGIC ---
+    const now = new Date();
+    const lastReset = new Date(user.lastReset);
+    const hoursSinceReset = (now - lastReset) / (1000 * 60 * 60);
+
+    // If more than 24 hours have passed, reset the count
+    if (hoursSinceReset >= 24) {
+      user.generationCount = 0;
+      user.lastReset = now;
+      // We don't await save here yet, we'll do it after checking the limit
+    }
+    // --------------------------
+
+    // Check Limit (After potential reset)
     if (user.generationCount >= USAGE_LIMIT) {
       return res.status(403).json({ 
         success: false, 
-        error: `Generation limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}). Please contact support for more credits.` 
+        error: `Daily limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}). Reset occurs 24h after your last usage.` 
       });
     }
 
@@ -75,7 +88,7 @@ app.post("/api/generate", async (req, res) => {
     const result = await model.generateContent(prompt);
     const aiResponse = await result.response.text();
 
-    // Save to DB with User ID
+    // Save Generation
     const newGeneration = new Generation({
       topic,
       content: aiResponse,
@@ -83,7 +96,7 @@ app.post("/api/generate", async (req, res) => {
     });
     await newGeneration.save();
 
-    // Increment Usage
+    // Increment Usage and Save User State
     user.generationCount += 1;
     await user.save();
 
