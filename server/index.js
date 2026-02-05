@@ -1,37 +1,47 @@
-// 1. Core Imports
-require('dotenv').config(); // MUST be at the very top
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// 2. Model Import (We'll use this in Day 2)
 const Generation = require('./models/Generation');
+const User = require('./models/User');
 
-// 3. Initialize App and Middleware
 const app = express();
-app.use(express.json()); // Essential to parse JSON body from Postman/Frontend
-app.use(cors()); // Allows your React frontend to talk to this backend
+app.use(express.json());
+app.use(cors());
 
-// 4. AI Configuration
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 5. MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Successfully connected to MongoDB Atlas"))
-  .catch(err => {
-    console.error("❌ MongoDB connection error:", err);
-    process.exit(1); // Exit if database fails to connect
-  });
+// --- CONFIGURATION ---
+const USAGE_LIMIT = 5; // Set your limit here
 
-// 6. The Generation Route (Now with Database Logic)
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB Error:", err));
+
+// 1. GENERATE WITH LIMITS
 app.post("/api/generate", async (req, res) => {
   try {
-    
-    // Choose the most recent model (2026 standard)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const { topic, style, uid, email } = req.body;
 
-    const { topic, style } = req.body;
+    if (!uid) return res.status(401).json({ error: "Authentication required." });
+
+    // Find user or create if new
+    let user = await User.findOne({ uid });
+    if (!user) {
+      user = await User.create({ uid, email });
+    }
+
+    // Check Limit
+    if (user.generationCount >= USAGE_LIMIT) {
+      return res.status(403).json({ 
+        success: false, 
+        error: `Generation limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}). Please contact support for more credits.` 
+      });
+    }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `
       As an expert marketing strategist with a ${style} persona, generate COMPLETE content for "${topic}".
@@ -65,17 +75,22 @@ app.post("/api/generate", async (req, res) => {
     const result = await model.generateContent(prompt);
     const aiResponse = await result.response.text();
 
-    // SAVING TO DATABASE: This is what makes it a real project
+    // Save to DB with User ID
     const newGeneration = new Generation({
-      topic: topic,
-      content: aiResponse
+      topic,
+      content: aiResponse,
+      userId: uid
     });
     await newGeneration.save();
+
+    // Increment Usage
+    user.generationCount += 1;
+    await user.save();
 
     res.status(200).json({ 
       success: true, 
       data: aiResponse,
-      message: "Content generated and saved successfully!" 
+      usage: user.generationCount 
     });
   } catch (error) {
     console.error("API Error:", error);
@@ -83,41 +98,32 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-// Add this to your server/index.js
-app.get('/api/history', async (req, res) => {
+// 2. GET HISTORY (ONLY FOR LOGGED IN USER)
+app.get('/api/history/:uid', async (req, res) => {
   try {
-    // 1. Ensure 'Generation' matches the model name in your save route
-    // 2. We sort by newest first (-1) and limit to 10 for performance
-    const history = await Generation.find().sort({ createdAt: -1 }).limit(10);
+    const history = await Generation.find({ userId: req.params.uid }).sort({ createdAt: -1 });
+    const user = await User.findOne({ uid: req.params.uid });
     
     res.status(200).json({ 
       success: true, 
-      data: history 
+      data: history,
+      usage: user ? user.generationCount : 0,
+      limit: USAGE_LIMIT
     });
   } catch (error) {
-    // This will print the EXACT error in your terminal so you can see why it failed
-    console.error("Database Fetch Error:", error); 
-    res.status(500).json({ 
-      success: false, 
-      error: "Could not fetch history from database" 
-    });
+    res.status(500).json({ success: false, error: "Could not fetch history" });
   }
 });
 
-// Add this to your server/index.js
+// 3. DELETE
 app.delete('/api/history/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    await Generation.findByIdAndDelete(id); // Ensure 'Generation' matches your model name
-    res.status(200).json({ success: true, message: "Generation deleted successfully" });
+    await Generation.findByIdAndDelete(req.params.id);
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error("Delete Error:", error);
-    res.status(500).json({ success: false, error: "Failed to delete item" });
+    res.status(500).json({ success: false, error: "Delete failed" });
   }
 });
 
-// 7. Start Server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
