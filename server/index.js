@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const axios = require('axios');
+const cheerio = require('cheerio');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const Generation = require('./models/Generation');
@@ -14,13 +16,49 @@ app.use(cors());
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // --- CONFIGURATION ---
-const USAGE_LIMIT = 5; // Set your limit here
+const USAGE_LIMIT = 5; 
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
-// 1. GENERATE WITH DAILY LIMIT RESET
+/**
+ * Robust Scraper with Anti-Bot Headers
+ * Scrapes the URL and returns clean text or null if failed.
+ */
+async function scrapeUrlContent(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8',
+        'Referer': 'https://www.google.com/',
+        'Accept-Language': 'en-US,en;q=0.5'
+      },
+      timeout: 8000
+    });
+
+    const $ = cheerio.load(data);
+    
+    // Clean unnecessary tags
+    $('script, style, nav, footer, header, aside, noscript, iframe').remove();
+    
+    const title = $('title').text() || $('h1').first().text() || "Web Content";
+    const paragraphs = [];
+    $('p').each((i, el) => {
+      const text = $(el).text().trim();
+      if (text.length > 50) paragraphs.push(text);
+    });
+
+    const bodyText = paragraphs.join('\n').substring(0, 6000); // Limit to avoid prompt token overflow
+    return bodyText.length > 100 ? { title, bodyText } : null;
+  } catch (error) {
+    console.error(`⚠️ Scrape Failed for ${url}:`, error.message);
+    return null; 
+  }
+}
+
+// 1. GENERATE WITH URL-TO-CONTENT & GEMINI 2.0 FLASH
 app.post("/api/generate", async (req, res) => {
   try {
     const { topic, style, uid, email } = req.body;
@@ -38,51 +76,70 @@ app.post("/api/generate", async (req, res) => {
     const lastReset = new Date(user.lastReset);
     const hoursSinceReset = (now - lastReset) / (1000 * 60 * 60);
 
-    // If more than 24 hours have passed, reset the count
     if (hoursSinceReset >= 24) {
       user.generationCount = 0;
       user.lastReset = now;
-      // We don't await save here yet, we'll do it after checking the limit
     }
-    // --------------------------
 
-    // Check Limit (After potential reset)
+    // Check Limit
     if (user.generationCount >= USAGE_LIMIT) {
       return res.status(403).json({ 
         success: false, 
-        error: `Daily limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}). Reset occurs 24h after your last usage.` 
+        error: `Daily limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}).` 
       });
     }
 
+    // --- URL DETECTION & SCRAPING ---
+    let finalSourceMaterial = topic;
+    let isUrl = false;
+    
+    // Check if input is a URL
+    if (topic.trim().toLowerCase().startsWith('http')) {
+      isUrl = true;
+      const scraped = await scrapeUrlContent(topic.trim());
+      
+      if (scraped) {
+        finalSourceMaterial = `TITLE: ${scraped.title}\n\nCONTENT: ${scraped.bodyText}`;
+      } else {
+        // Fallback: If scraping is blocked, tell Gemini to use its internal knowledge of that URL
+        finalSourceMaterial = `The user provided this URL: ${topic}. I couldn't scrape the live text, so please generate the strategy based on your general knowledge of this link/domain or its likely content.`;
+      }
+    }
+
+    // UPDATED TO GEMINI 2.5 FLASH
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `
-      As an expert marketing strategist with a ${style} persona, generate COMPLETE content for "${topic}".
-      The tone of all content must be strictly ${style}.
-      
-      You MUST provide ALL five platforms. Use the EXACT unique markers below:
+      You are a world-class Social Media Strategist with a ${style} persona. 
+      Repurpose the following source material into a multi-platform content strategy.
+
+      SOURCE MATERIAL:
+      "${finalSourceMaterial}"
+
+      CONSTRAINTS:
+      - Tone: Strictly ${style} throughout.
+      - Formatting: Use the EXACT markers below for the frontend to parse.
+      - Quality: Write ready-to-post copy, not summaries.
 
       |||LINKEDIN|||
-      **[Bold Headline]**
-      [Content]
+      **[Engaging Headline]**
+      [Professional yet ${style} post with bullet points and CTA]
 
       |||TWITTER|||
-      **[Thread Title]**
-      [Content]
+      **[Thread Hook]**
+      [Follow-up 2-3 tweet structure]
 
       |||YOUTUBE|||
-      **[Video Title]**
-      [Content]
+      **[Viral Title Suggestion]**
+      [Script outline and engaging video description]
 
       |||FACEBOOK|||
-      **[Headline]**
-      [Content]
+      **[Community Headline]**
+      [Detailed, relatable story-driven post]
 
       |||INSTAGRAM|||
-      **[Caption Heading]**
-      [Content]
-
-      Ensure the ${style} tone is consistent across every section.
+      **[Punchy Caption Heading]**
+      [Main caption with 5 niche hashtags]
     `;
 
     const result = await model.generateContent(prompt);
@@ -90,28 +147,29 @@ app.post("/api/generate", async (req, res) => {
 
     // Save Generation
     const newGeneration = new Generation({
-      topic,
+      topic: isUrl ? "Article Repurposed" : topic,
       content: aiResponse,
       userId: uid
     });
     await newGeneration.save();
 
-    // Increment Usage and Save User State
+    // Increment Usage
     user.generationCount += 1;
     await user.save();
 
     res.status(200).json({ 
       success: true, 
       data: aiResponse,
-      usage: user.generationCount 
+      usage: user.generationCount,
+      lastReset: user.lastReset 
     });
   } catch (error) {
-    console.error("API Error:", error);
-    res.status(500).json({ success: false, error: "Failed to generate content." });
+    console.error("Critical API Error:", error);
+    res.status(500).json({ success: false, error: "Failed to generate content. The AI engine stalled." });
   }
 });
 
-// 2. GET HISTORY (ONLY FOR LOGGED IN USER)
+// 2. GET HISTORY
 app.get('/api/history/:uid', async (req, res) => {
   try {
     const history = await Generation.find({ userId: req.params.uid }).sort({ createdAt: -1 });
@@ -121,7 +179,8 @@ app.get('/api/history/:uid', async (req, res) => {
       success: true, 
       data: history,
       usage: user ? user.generationCount : 0,
-      limit: USAGE_LIMIT
+      limit: USAGE_LIMIT,
+      lastReset: user ? user.lastReset : null
     });
   } catch (error) {
     res.status(500).json({ success: false, error: "Could not fetch history" });

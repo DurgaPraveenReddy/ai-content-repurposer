@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Send, Sparkles, Copy, Check, Linkedin, Twitter, 
-  Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, Search, Moon, Sun, LogOut, Lock
+  Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, 
+  Search, Moon, Sun, LogOut, Lock, Share2, Clock
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -22,7 +23,42 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// Advanced UI: Skeleton Loader Component
+// --- NEW COMPONENT: Reset Countdown ---
+const ResetCountdown = ({ lastReset }) => {
+  const [timeLeft, setTimeLeft] = useState("");
+
+  useEffect(() => {
+    if (!lastReset) return;
+
+    const calculateTime = () => {
+      const resetTime = new Date(new Date(lastReset).getTime() + 24 * 60 * 60 * 1000);
+      const diff = resetTime - new Date();
+
+      if (diff <= 0) {
+        setTimeLeft("Ready!");
+        return;
+      }
+
+      const h = Math.floor(diff / (1000 * 60 * 60));
+      const m = Math.floor((diff / (1000 * 60)) % 60);
+      const s = Math.floor((diff / 1000) % 60);
+      setTimeLeft(`${h}h ${m}m ${s}s`);
+    };
+
+    calculateTime();
+    const timer = setInterval(calculateTime, 1000);
+    return () => clearInterval(timer);
+  }, [lastReset]);
+
+  return (
+    <div className="flex items-center gap-1.5 text-indigo-400 font-mono text-[11px] font-bold">
+      <Clock className="w-3 h-3" />
+      <span>RESETS IN: {timeLeft}</span>
+    </div>
+  );
+};
+
+// Advanced UI: Skeleton Loader
 const SkeletonCard = () => (
   <div className="border rounded-[2rem] p-7 bg-white/5 border-white/10 animate-pulse">
     <div className="flex justify-between mb-4">
@@ -42,13 +78,15 @@ function App() {
   const [topic, setTopic] = useState('');
   const [style, setStyle] = useState('Professional');
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0); 
   const [content, setContent] = useState(''); 
   const [copiedId, setCopiedId] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [usage, setUsage] = useState({ current: 0, limit: 5 });
+  // UPDATED: Added lastReset to usage state
+  const [usage, setUsage] = useState({ current: 0, limit: 5, lastReset: null });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -59,6 +97,27 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    let interval;
+    if (loading) {
+      setProgress(0);
+      interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 90) {
+            clearInterval(interval);
+            return 90;
+          }
+          return prev + 5;
+        });
+      }, 200);
+    } else {
+      setProgress(100);
+      const timeout = setTimeout(() => setProgress(0), 500);
+      return () => clearTimeout(timeout);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const handleLogin = async () => {
     try {
@@ -73,7 +132,7 @@ function App() {
   const handleGenerate = async () => {
     if (!topic || !user) return;
     setLoading(true);
-    setContent(''); // Clear previous results while loading
+    setContent(''); 
     try {
       const response = await axios.post('http://localhost:5000/api/generate', { 
         topic, 
@@ -82,7 +141,12 @@ function App() {
         email: user.email 
       });
       setContent(response.data.data);
-      setUsage(prev => ({ ...prev, current: response.data.usage }));
+      // UPDATED: Handle lastReset from generation response
+      setUsage(prev => ({ 
+        ...prev, 
+        current: response.data.usage,
+        lastReset: response.data.lastReset || prev.lastReset 
+      }));
     } catch (error) {
       alert(error.response?.data?.error || "Error generating content");
     } finally {
@@ -96,7 +160,12 @@ function App() {
       const response = await axios.get(`http://localhost:5000/api/history/${targetUid}`);
       if (response.data.success) {
         setHistoryData(response.data.data);
-        setUsage({ current: response.data.usage, limit: response.data.limit });
+        // UPDATED: Set lastReset from history fetch
+        setUsage({ 
+          current: response.data.usage, 
+          limit: response.data.limit,
+          lastReset: response.data.lastReset 
+        });
         if (!uid) setShowHistory(true);
       }
     } catch (error) {
@@ -119,6 +188,24 @@ function App() {
     const allText = platformCards.map(p => `${p.name.toUpperCase()}\n${p.body}`).join('\n\n---\n\n');
     navigator.clipboard.writeText(allText);
     alert("Full strategy copied to clipboard!");
+  };
+
+  const handleShare = async (platform) => {
+    const shareData = {
+      title: `AI Content for ${platform.name}`,
+      text: platform.body,
+    };
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        console.log("Share failed", err);
+      }
+    } else {
+      navigator.clipboard.writeText(platform.body);
+      setCopiedId(platform.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    }
   };
 
   const parseContent = (text) => {
@@ -145,6 +232,10 @@ function App() {
   return (
     <div className={`min-h-screen transition-colors duration-500 font-sans ${isDarkMode ? 'bg-[#030712] text-slate-200' : 'bg-slate-50 text-slate-900'}`}>
       
+      {progress > 0 && (
+        <div className="fixed top-0 left-0 h-1 bg-indigo-500 z-[100] transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
+      )}
+
       {showHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
           <div className={`${isDarkMode ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200'} border w-full max-w-2xl rounded-[2rem] overflow-hidden flex flex-col max-h-[80vh]`}>
@@ -155,7 +246,7 @@ function App() {
               </div>
               <input 
                 type="text" 
-                placeholder="Search your history..." 
+                placeholder="Search history..." 
                 className={`w-full p-3 rounded-xl border ${isDarkMode ? 'bg-black/40 border-white/10 text-white' : 'bg-slate-100 border-slate-200 text-slate-900'}`}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -183,10 +274,17 @@ function App() {
           <div className="flex items-center gap-4">
             {user ? (
               <>
+                {/* UPDATED: Usage info with ResetCountdown */}
                 <div className="hidden md:block text-right mr-2">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase">Usage: {usage.current}/{usage.limit}</p>
-                  <div className="w-24 h-1.5 bg-slate-800 rounded-full mt-1 overflow-hidden">
-                    <div className="h-full bg-indigo-500 transition-all" style={{ width: `${(usage.current / usage.limit) * 100}%` }} />
+                  <div className="flex flex-col items-end gap-1">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Usage: {usage.current}/{usage.limit}</p>
+                    <ResetCountdown lastReset={usage.lastReset} />
+                  </div>
+                  <div className="w-32 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 transition-all duration-500" 
+                      style={{ width: `${(usage.current / usage.limit) * 100}%` }} 
+                    />
                   </div>
                 </div>
                 <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 rounded-xl border border-white/10 transition-colors hover:bg-white/5">{isDarkMode ? <Sun className="w-5 h-5 text-yellow-500" /> : <Moon className="w-5 h-5 text-indigo-600" />}</button>
@@ -199,6 +297,7 @@ function App() {
           </div>
         </header>
 
+        {/* --- MAIN CONTENT LOGIC (LOGIN CHECK) --- */}
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Lock className="w-16 h-16 text-indigo-500/20 mb-6" />
@@ -218,12 +317,12 @@ function App() {
                     <option value="Sarcastic">Sarcastic</option>
                   </select>
                 </div>
-                <textarea className={`w-full border rounded-2xl p-5 outline-none mb-6 min-h-[150px] transition-all focus:ring-2 focus:ring-indigo-500/20 ${isDarkMode ? 'bg-black/40 border-white/5 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="What are we talking about today?" value={topic} onChange={(e) => setTopic(e.target.value)} />
+                <textarea className={`w-full border rounded-2xl p-5 outline-none mb-6 min-h-[150px] transition-all focus:ring-2 focus:ring-indigo-500/20 ${isDarkMode ? 'bg-black/40 border-white/5 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'}`} placeholder="Paste a blog URL or describe your topic..." value={topic} onChange={(e) => setTopic(e.target.value)} />
                 <button onClick={handleGenerate} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-500 py-4.5 rounded-xl font-bold text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2">
                   {loading ? (
-                    <><Sparkles className="w-4 h-4 animate-spin" /> Igniting Engine...</>
+                    <><Sparkles className="w-4 h-4 animate-spin" /> Thinking...</>
                   ) : (
-                    <><Send className="w-4 h-4" /> Generate </>
+                    <><Send className="w-4 h-4" /> Generate Plan</>
                   )}
                 </button>
               </div>
@@ -231,16 +330,16 @@ function App() {
 
             <div className="lg:col-span-8">
               {loading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
+                <div className="space-y-4">
+                  <p className="text-center text-xs font-bold uppercase tracking-[0.2em] text-indigo-400 animate-pulse">Assembling Your Strategy...</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
+                  </div>
                 </div>
               ) : platformCards.length > 0 ? (
                 <div className="space-y-6">
-                  <div className="flex justify-end">
-                    <button 
-                      onClick={handleCopyAll}
-                      className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 transition-colors"
-                    >
+                  <div className="flex justify-end gap-4">
+                    <button onClick={handleCopyAll} className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 transition-colors">
                       <Copy className="w-3 h-3" /> Copy Full Strategy
                     </button>
                   </div>
@@ -252,8 +351,11 @@ function App() {
                             {p.icon} 
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-[10px] text-slate-600 font-mono">{p.body.length} chars</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-600 font-mono mr-2">{p.body.length} chars</span>
+                            <button onClick={() => handleShare(p)} className="p-1.5 hover:bg-indigo-500/10 rounded-lg transition-colors group">
+                              <Share2 className="w-4 h-4 text-slate-500 group-hover:text-indigo-400" />
+                            </button>
                             <button onClick={() => { navigator.clipboard.writeText(p.body); setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); }}>
                               {copiedId === p.id ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-slate-500 hover:text-indigo-400" />}
                             </button>
@@ -267,7 +369,7 @@ function App() {
               ) : (
                 <div className="h-full min-h-[400px] border-2 border-dashed border-white/5 rounded-[3rem] flex flex-col items-center justify-center text-slate-600">
                   <LayoutDashboard className="w-12 h-12 mb-4 opacity-10" />
-                  <p className="font-medium">Enter a topic and hit generate to begin.</p>
+                  <p className="font-medium text-center px-4">Enter a topic and hit generate to begin.</p>
                 </div>
               )}
             </div>
