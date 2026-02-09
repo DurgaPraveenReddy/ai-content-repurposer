@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, Sparkles, Copy, Check, Linkedin, Twitter, 
   Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, 
-  Search, Moon, Sun, LogOut, Lock, Share2, Clock
+  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -85,8 +85,11 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  // UPDATED: Added lastReset to usage state
   const [usage, setUsage] = useState({ current: 0, limit: 5, lastReset: null });
+
+  // NEW: Image states
+  const [cardImages, setCardImages] = useState({});
+  const [imageLoading, setImageLoading] = useState({});
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -133,6 +136,7 @@ function App() {
     if (!topic || !user) return;
     setLoading(true);
     setContent(''); 
+    setCardImages({}); // Reset images on new generation
     try {
       const response = await axios.post('http://localhost:5000/api/generate', { 
         topic, 
@@ -141,7 +145,6 @@ function App() {
         email: user.email 
       });
       setContent(response.data.data);
-      // UPDATED: Handle lastReset from generation response
       setUsage(prev => ({ 
         ...prev, 
         current: response.data.usage,
@@ -154,13 +157,28 @@ function App() {
     }
   };
 
+  // NEW: Generate Image Function
+  const handleGenerateImage = async (platformId, platformText) => {
+    setImageLoading(prev => ({ ...prev, [platformId]: true }));
+    try {
+      const res = await axios.post('http://localhost:5000/api/generate-image', {
+        text: platformText,
+        uid: user.uid
+      });
+      setCardImages(prev => ({ ...prev, [platformId]: res.data.url }));
+    } catch (err) {
+      alert("Image engine is busy, try again in a moment!");
+    } finally {
+      setImageLoading(prev => ({ ...prev, [platformId]: false }));
+    }
+  };
+
   const fetchHistory = async (uid) => {
     try {
       const targetUid = uid || user?.uid;
       const response = await axios.get(`http://localhost:5000/api/history/${targetUid}`);
       if (response.data.success) {
         setHistoryData(response.data.data);
-        // UPDATED: Set lastReset from history fetch
         setUsage({ 
           current: response.data.usage, 
           limit: response.data.limit,
@@ -254,7 +272,7 @@ function App() {
             </div>
             <div className="overflow-y-auto p-4 custom-scrollbar">
               {filteredHistory.map((item) => (
-                <div key={item._id} onClick={() => { setContent(item.content); setTopic(item.topic); setShowHistory(false); }} className={`p-5 mb-3 rounded-2xl border flex justify-between items-center group cursor-pointer ${isDarkMode ? 'bg-white/[0.02] border-white/5 hover:bg-indigo-600/10' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
+                <div key={item._id} onClick={() => { setContent(item.content); setTopic(item.topic); setCardImages({}); setShowHistory(false); }} className={`p-5 mb-3 rounded-2xl border flex justify-between items-center group cursor-pointer ${isDarkMode ? 'bg-white/[0.02] border-white/5 hover:bg-indigo-600/10' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
                   <span className="font-semibold capitalize">{item.topic}</span>
                   <button onClick={(e) => handleDelete(e, item._id)} className="p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
                 </div>
@@ -274,7 +292,6 @@ function App() {
           <div className="flex items-center gap-4">
             {user ? (
               <>
-                {/* UPDATED: Usage info with ResetCountdown */}
                 <div className="hidden md:block text-right mr-2">
                   <div className="flex flex-col items-end gap-1">
                     <p className="text-[10px] font-bold text-slate-500 uppercase">Usage: {usage.current}/{usage.limit}</p>
@@ -297,7 +314,6 @@ function App() {
           </div>
         </header>
 
-        {/* --- MAIN CONTENT LOGIC (LOGIN CHECK) --- */}
         {!user ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Lock className="w-16 h-16 text-indigo-500/20 mb-6" />
@@ -352,7 +368,17 @@ function App() {
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-slate-600 font-mono mr-2">{p.body.length} chars</span>
+                            {/* NEW: Generate Image Button */}
+                            {!cardImages[p.id] && (
+                              <button 
+                                onClick={() => handleGenerateImage(p.id, p.body)} 
+                                disabled={imageLoading[p.id]}
+                                className="p-1.5 hover:bg-purple-500/10 rounded-lg transition-colors group disabled:opacity-50"
+                                title="Magic Image"
+                              >
+                                {imageLoading[p.id] ? <Loader2 className="w-4 h-4 text-purple-400 animate-spin" /> : <ImageIcon className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />}
+                              </button>
+                            )}
                             <button onClick={() => handleShare(p)} className="p-1.5 hover:bg-indigo-500/10 rounded-lg transition-colors group">
                               <Share2 className="w-4 h-4 text-slate-500 group-hover:text-indigo-400" />
                             </button>
@@ -361,6 +387,12 @@ function App() {
                             </button>
                           </div>
                         </div>
+                        {/* NEW: Image Preview */}
+                        {cardImages[p.id] && (
+                          <div className="mb-4 rounded-xl overflow-hidden border border-white/5 animate-in zoom-in-95">
+                            <img src={cardImages[p.id]} alt="AI context" className="w-full h-40 object-cover" />
+                          </div>
+                        )}
                         <div className="text-sm leading-relaxed whitespace-pre-wrap">{p.body}</div>
                       </div>
                     ))}

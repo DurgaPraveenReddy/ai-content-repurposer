@@ -5,6 +5,9 @@ const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const hfToken = process.env.HF_TOKEN;
+
+
 
 const Generation = require('./models/Generation');
 const User = require('./models/User');
@@ -166,6 +169,54 @@ app.post("/api/generate", async (req, res) => {
   } catch (error) {
     console.error("Critical API Error:", error);
     res.status(500).json({ success: false, error: "Failed to generate content. The AI engine stalled." });
+  }
+});
+
+// IMAGE GENERATION
+app.post("/api/generate-image", async (req, res) => {
+  try {
+    const { text, uid } = req.body;
+    if (!uid) return res.status(401).json({ error: "Auth required" });
+
+    // 1. Prompt Engineering
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const promptEngineering = await model.generateContent(
+      `Analyze: "${text.substring(0, 200)}". 
+       Create a 1-sentence prompt for a photorealistic AI image. 
+       Style: Professional photography, 8k, no text.
+       Return only the prompt.`
+    );
+    const visualPrompt = promptEngineering.response.text();
+
+    // 2. The Final Router URL & Strict Headers
+    const hfRouterUrl = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell";
+
+    const response = await axios({
+      url: hfRouterUrl,
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${hfToken}`,
+        "Content-Type": "application/json",
+        "Accept": "image/jpeg", // CRITICAL: Tell the router exactly what format to return
+        "x-wait-for-model": "true" 
+      },
+      data: JSON.stringify({ inputs: visualPrompt }),
+      responseType: 'arraybuffer', 
+      timeout: 45000 
+    });
+
+    const base64Image = Buffer.from(response.data, 'binary').toString('base64');
+    
+    res.status(200).json({ 
+      success: true, 
+      url: `data:image/jpeg;base64,${base64Image}` 
+    });
+
+  } catch (error) {
+    // This logs the exact reason from Hugging Face if it fails again
+    const errorMsg = error.response?.data?.toString() || error.message;
+    console.error("HF Router Detailed Error:", errorMsg);
+    res.status(500).json({ error: "Image generation failed. Please try again." });
   }
 });
 
