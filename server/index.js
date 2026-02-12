@@ -7,8 +7,6 @@ const cheerio = require('cheerio');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const hfToken = process.env.HF_TOKEN;
 
-
-
 const Generation = require('./models/Generation');
 const User = require('./models/User');
 
@@ -27,7 +25,6 @@ mongoose.connect(process.env.MONGO_URI)
 
 /**
  * Robust Scraper with Anti-Bot Headers
- * Scrapes the URL and returns clean text or null if failed.
  */
 async function scrapeUrlContent(url) {
   try {
@@ -42,8 +39,6 @@ async function scrapeUrlContent(url) {
     });
 
     const $ = cheerio.load(data);
-    
-    // Clean unnecessary tags
     $('script, style, nav, footer, header, aside, noscript, iframe').remove();
     
     const title = $('title').text() || $('h1').first().text() || "Web Content";
@@ -53,7 +48,7 @@ async function scrapeUrlContent(url) {
       if (text.length > 50) paragraphs.push(text);
     });
 
-    const bodyText = paragraphs.join('\n').substring(0, 6000); // Limit to avoid prompt token overflow
+    const bodyText = paragraphs.join('\n').substring(0, 6000);
     return bodyText.length > 100 ? { title, bodyText } : null;
   } catch (error) {
     console.error(`⚠️ Scrape Failed for ${url}:`, error.message);
@@ -61,20 +56,18 @@ async function scrapeUrlContent(url) {
   }
 }
 
-// 1. GENERATE WITH URL-TO-CONTENT & GEMINI 2.0 FLASH
+// 1. GENERATE WITH URL-TO-CONTENT & GEMINI 2.5 FLASH
 app.post("/api/generate", async (req, res) => {
   try {
     const { topic, style, uid, email } = req.body;
 
     if (!uid) return res.status(401).json({ error: "Authentication required." });
 
-    // Find user or create if new
     let user = await User.findOne({ uid });
     if (!user) {
       user = await User.create({ uid, email, lastReset: new Date() });
     }
 
-    // --- DAILY RESET LOGIC ---
     const now = new Date();
     const lastReset = new Date(user.lastReset);
     const hoursSinceReset = (now - lastReset) / (1000 * 60 * 60);
@@ -84,7 +77,6 @@ app.post("/api/generate", async (req, res) => {
       user.lastReset = now;
     }
 
-    // Check Limit
     if (user.generationCount >= USAGE_LIMIT) {
       return res.status(403).json({ 
         success: false, 
@@ -92,24 +84,19 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // --- URL DETECTION & SCRAPING ---
     let finalSourceMaterial = topic;
     let isUrl = false;
     
-    // Check if input is a URL
     if (topic.trim().toLowerCase().startsWith('http')) {
       isUrl = true;
       const scraped = await scrapeUrlContent(topic.trim());
-      
       if (scraped) {
         finalSourceMaterial = `TITLE: ${scraped.title}\n\nCONTENT: ${scraped.bodyText}`;
       } else {
-        // Fallback: If scraping is blocked, tell Gemini to use its internal knowledge of that URL
         finalSourceMaterial = `The user provided this URL: ${topic}. I couldn't scrape the live text, so please generate the strategy based on your general knowledge of this link/domain or its likely content.`;
       }
     }
 
-    // UPDATED TO GEMINI 2.5 FLASH
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `
@@ -148,27 +135,28 @@ app.post("/api/generate", async (req, res) => {
     const result = await model.generateContent(prompt);
     const aiResponse = await result.response.text();
 
-    // Save Generation
     const newGeneration = new Generation({
       topic: isUrl ? "Article Repurposed" : topic,
       content: aiResponse,
       userId: uid
     });
-    await newGeneration.save();
+    
+    // Save to get the ID
+    const savedGen = await newGeneration.save();
 
-    // Increment Usage
     user.generationCount += 1;
     await user.save();
 
     res.status(200).json({ 
       success: true, 
       data: aiResponse,
+      id: savedGen._id, // RETURN THE ID FOR THE FRONTEND TO TRACK
       usage: user.generationCount,
       lastReset: user.lastReset 
     });
   } catch (error) {
     console.error("Critical API Error:", error);
-    res.status(500).json({ success: false, error: "Failed to generate content. The AI engine stalled." });
+    res.status(500).json({ success: false, error: "Failed to generate content." });
   }
 });
 
@@ -178,17 +166,12 @@ app.post("/api/generate-image", async (req, res) => {
     const { text, uid } = req.body;
     if (!uid) return res.status(401).json({ error: "Auth required" });
 
-    // 1. Prompt Engineering
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const promptEngineering = await model.generateContent(
-      `Analyze: "${text.substring(0, 200)}". 
-       Create a 1-sentence prompt for a photorealistic AI image. 
-       Style: Professional photography, 8k, no text.
-       Return only the prompt.`
+      `Analyze: "${text.substring(0, 200)}". Create a 1-sentence prompt for a photorealistic AI image. Style: Professional photography, 8k, no text. Return only the prompt.`
     );
     const visualPrompt = promptEngineering.response.text();
 
-    // 2. The Final Router URL & Strict Headers
     const hfRouterUrl = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell";
 
     const response = await axios({
@@ -197,7 +180,7 @@ app.post("/api/generate-image", async (req, res) => {
       headers: {
         Authorization: `Bearer ${hfToken}`,
         "Content-Type": "application/json",
-        "Accept": "image/jpeg", // CRITICAL: Tell the router exactly what format to return
+        "Accept": "image/jpeg",
         "x-wait-for-model": "true" 
       },
       data: JSON.stringify({ inputs: visualPrompt }),
@@ -206,17 +189,10 @@ app.post("/api/generate-image", async (req, res) => {
     });
 
     const base64Image = Buffer.from(response.data, 'binary').toString('base64');
-    
-    res.status(200).json({ 
-      success: true, 
-      url: `data:image/jpeg;base64,${base64Image}` 
-    });
-
+    res.status(200).json({ success: true, url: `data:image/jpeg;base64,${base64Image}` });
   } catch (error) {
-    // This logs the exact reason from Hugging Face if it fails again
-    const errorMsg = error.response?.data?.toString() || error.message;
-    console.error("HF Router Detailed Error:", errorMsg);
-    res.status(500).json({ error: "Image generation failed. Please try again." });
+    console.error("HF Router Detailed Error:", error.message);
+    res.status(500).json({ error: "Image generation failed." });
   }
 });
 
@@ -235,6 +211,27 @@ app.get('/api/history/:uid', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: "Could not fetch history" });
+  }
+});
+
+// --- NEW: UPDATE CONTENT (EDIT FEATURE) ---
+app.put('/api/history/:id', async (req, res) => {
+  try {
+    const { content } = req.body;
+    const updatedGen = await Generation.findByIdAndUpdate(
+      req.params.id, 
+      { content: content }, 
+      { new: true }
+    );
+    
+    if (!updatedGen) {
+      return res.status(404).json({ success: false, error: "Record not found" });
+    }
+    
+    res.status(200).json({ success: true, data: updatedGen });
+  } catch (error) {
+    console.error("Update Error:", error);
+    res.status(500).json({ success: false, error: "Failed to save edits" });
   }
 });
 

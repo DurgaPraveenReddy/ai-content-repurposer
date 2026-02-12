@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, Sparkles, Copy, Check, Linkedin, Twitter, 
   Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, 
-  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2
+  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2, Download, Edit3, Save
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -87,7 +87,12 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [usage, setUsage] = useState({ current: 0, limit: 5, lastReset: null });
 
-  // NEW: Image states
+  // --- NEW EDITING STATES ---
+  const [currentGenId, setCurrentGenId] = useState(null);
+  const [editableContent, setEditableContent] = useState({});
+  const [editingPlatform, setEditingPlatform] = useState(null);
+
+  // Image states
   const [cardImages, setCardImages] = useState({});
   const [imageLoading, setImageLoading] = useState({});
 
@@ -132,11 +137,30 @@ function App() {
 
   const handleLogout = () => signOut(auth);
 
+  const parseContent = (text) => {
+    const platforms = [
+      { id: 'linkedin', name: 'LinkedIn', icon: <Linkedin className="w-4 h-4 text-[#0A66C2]" />, marker: "|||LINKEDIN|||" },
+      { id: 'twitter', name: 'Twitter', icon: <Twitter className="w-4 h-4 text-[#1DA1F2]" />, marker: "|||TWITTER|||" },
+      { id: 'youtube', name: 'YouTube', icon: <Youtube className="w-4 h-4 text-[#FF0000]" />, marker: "|||YOUTUBE|||" },
+      { id: 'facebook', name: 'Facebook', icon: <Facebook className="w-4 h-4 text-[#1877F2]" />, marker: "|||FACEBOOK|||" },
+      { id: 'instagram', name: 'Instagram', icon: <Instagram className="w-4 h-4 text-[#E4405F]" />, marker: "|||INSTAGRAM|||" }
+    ];
+    return platforms.map(p => {
+      if (text.includes(p.marker)) {
+        let section = text.split(p.marker)[1].split("|||")[0].trim();
+        section = section.replace(/\*\*(.*?)\*\*/g, '$1').trim();
+        return { ...p, body: section };
+      }
+      return { ...p, body: null };
+    }).filter(p => p.body); 
+  };
+
   const handleGenerate = async () => {
     if (!topic || !user) return;
     setLoading(true);
     setContent(''); 
-    setCardImages({}); // Reset images on new generation
+    setEditableContent({}); // Reset edits
+    setCardImages({}); // Reset images
     try {
       const response = await axios.post('http://localhost:5000/api/generate', { 
         topic, 
@@ -144,7 +168,18 @@ function App() {
         uid: user.uid, 
         email: user.email 
       });
-      setContent(response.data.data);
+      const aiResponse = response.data.data;
+      setContent(aiResponse);
+      
+      // Track ID from backend
+      if (response.data.id) setCurrentGenId(response.data.id);
+
+      // Map response to editable state
+      const parsed = parseContent(aiResponse);
+      const initialEdits = {};
+      parsed.forEach(p => initialEdits[p.id] = p.body);
+      setEditableContent(initialEdits);
+
       setUsage(prev => ({ 
         ...prev, 
         current: response.data.usage,
@@ -157,7 +192,27 @@ function App() {
     }
   };
 
-  // NEW: Generate Image Function
+  // --- NEW: SAVE TO BACKEND ---
+  const handleUpdateContent = async (platformId) => {
+    if (!currentGenId) return;
+    try {
+      const platforms = parseContent(content);
+      const updatedFullContent = platforms.map(p => {
+        const body = p.id === platformId ? editableContent[p.id] : (editableContent[p.id] || p.body);
+        return `${p.marker}\n${body}`;
+      }).join('\n\n');
+
+      await axios.put(`http://localhost:5000/api/history/${currentGenId}`, {
+        content: updatedFullContent
+      });
+      
+      setContent(updatedFullContent);
+    } catch (err) {
+      console.error("Save failed:", err);
+      alert("Failed to sync edits to cloud.");
+    }
+  };
+
   const handleGenerateImage = async (platformId, platformText) => {
     setImageLoading(prev => ({ ...prev, [platformId]: true }));
     try {
@@ -171,6 +226,15 @@ function App() {
     } finally {
       setImageLoading(prev => ({ ...prev, [platformId]: false }));
     }
+  };
+
+  const handleDownloadImage = (platformName, imageUrl) => {
+    const link = document.createElement('a');
+    link.href = imageUrl;
+    link.download = `${platformName}_AI_Image.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const fetchHistory = async (uid) => {
@@ -203,15 +267,17 @@ function App() {
   };
 
   const handleCopyAll = () => {
-    const allText = platformCards.map(p => `${p.name.toUpperCase()}\n${p.body}`).join('\n\n---\n\n');
+    const activeCards = parseContent(content);
+    const allText = activeCards.map(p => `${p.name.toUpperCase()}\n${editableContent[p.id] || p.body}`).join('\n\n---\n\n');
     navigator.clipboard.writeText(allText);
     alert("Full strategy copied to clipboard!");
   };
 
   const handleShare = async (platform) => {
+    const activeText = editableContent[platform.id] || platform.body;
     const shareData = {
       title: `AI Content for ${platform.name}`,
-      text: platform.body,
+      text: activeText,
     };
     if (navigator.share) {
       try {
@@ -220,28 +286,10 @@ function App() {
         console.log("Share failed", err);
       }
     } else {
-      navigator.clipboard.writeText(platform.body);
+      navigator.clipboard.writeText(activeText);
       setCopiedId(platform.id);
       setTimeout(() => setCopiedId(null), 2000);
     }
-  };
-
-  const parseContent = (text) => {
-    const platforms = [
-      { id: 'linkedin', name: 'LinkedIn', icon: <Linkedin className="w-4 h-4 text-[#0A66C2]" />, marker: "|||LINKEDIN|||" },
-      { id: 'twitter', name: 'Twitter', icon: <Twitter className="w-4 h-4 text-[#1DA1F2]" />, marker: "|||TWITTER|||" },
-      { id: 'youtube', name: 'YouTube', icon: <Youtube className="w-4 h-4 text-[#FF0000]" />, marker: "|||YOUTUBE|||" },
-      { id: 'facebook', name: 'Facebook', icon: <Facebook className="w-4 h-4 text-[#1877F2]" />, marker: "|||FACEBOOK|||" },
-      { id: 'instagram', name: 'Instagram', icon: <Instagram className="w-4 h-4 text-[#E4405F]" />, marker: "|||INSTAGRAM|||" }
-    ];
-    return platforms.map(p => {
-      if (text.includes(p.marker)) {
-        let section = text.split(p.marker)[1].split("|||")[0].trim();
-        section = section.replace(/\*\*(.*?)\*\*/g, '$1').trim();
-        return { ...p, body: section };
-      }
-      return { ...p, body: null };
-    }).filter(p => p.body); 
   };
 
   const platformCards = content ? parseContent(content) : [];
@@ -272,7 +320,18 @@ function App() {
             </div>
             <div className="overflow-y-auto p-4 custom-scrollbar">
               {filteredHistory.map((item) => (
-                <div key={item._id} onClick={() => { setContent(item.content); setTopic(item.topic); setCardImages({}); setShowHistory(false); }} className={`p-5 mb-3 rounded-2xl border flex justify-between items-center group cursor-pointer ${isDarkMode ? 'bg-white/[0.02] border-white/5 hover:bg-indigo-600/10' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
+                <div key={item._id} onClick={() => { 
+                  setContent(item.content); 
+                  setTopic(item.topic); 
+                  setCurrentGenId(item._id);
+                  // Load edits from history
+                  const parsed = parseContent(item.content);
+                  const historyEdits = {};
+                  parsed.forEach(p => historyEdits[p.id] = p.body);
+                  setEditableContent(historyEdits);
+                  setCardImages({}); 
+                  setShowHistory(false); 
+                }} className={`p-5 mb-3 rounded-2xl border flex justify-between items-center group cursor-pointer ${isDarkMode ? 'bg-white/[0.02] border-white/5 hover:bg-indigo-600/10' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
                   <span className="font-semibold capitalize">{item.topic}</span>
                   <button onClick={(e) => handleDelete(e, item._id)} className="p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
                 </div>
@@ -361,20 +420,33 @@ function App() {
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in">
                     {platformCards.map((p) => (
-                      <div key={p.id} className={`border rounded-[2rem] p-7 transition-all hover:translate-y-[-4px] ${isDarkMode ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200 shadow-md'}`}>
+                      <div key={p.id} className={`border rounded-[2rem] p-7 transition-all hover:translate-y-[-4px] flex flex-col ${isDarkMode ? 'bg-white/[0.03] border-white/10 shadow-xl' : 'bg-white border-slate-200 shadow-md'}`}>
                         <div className="flex justify-between items-center mb-4">
                           <div className="flex items-center gap-2">
                             {p.icon} 
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {/* NEW: Generate Image Button */}
+                          <div className="flex items-center gap-1.5">
+                            {/* NEW: Edit/Save Toggle */}
+                            <button 
+                              onClick={() => {
+                                if (editingPlatform === p.id) {
+                                  handleUpdateContent(p.id);
+                                  setEditingPlatform(null);
+                                } else {
+                                  setEditingPlatform(p.id);
+                                }
+                              }}
+                              className={`p-1.5 rounded-lg transition-colors ${editingPlatform === p.id ? 'bg-green-500/20 text-green-400' : 'hover:bg-white/5 text-slate-500'}`}
+                            >
+                              {editingPlatform === p.id ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+                            </button>
+
                             {!cardImages[p.id] && (
                               <button 
-                                onClick={() => handleGenerateImage(p.id, p.body)} 
+                                onClick={() => handleGenerateImage(p.id, editableContent[p.id] || p.body)} 
                                 disabled={imageLoading[p.id]}
                                 className="p-1.5 hover:bg-purple-500/10 rounded-lg transition-colors group disabled:opacity-50"
-                                title="Magic Image"
                               >
                                 {imageLoading[p.id] ? <Loader2 className="w-4 h-4 text-purple-400 animate-spin" /> : <ImageIcon className="w-4 h-4 text-slate-500 group-hover:text-purple-400" />}
                               </button>
@@ -382,18 +454,45 @@ function App() {
                             <button onClick={() => handleShare(p)} className="p-1.5 hover:bg-indigo-500/10 rounded-lg transition-colors group">
                               <Share2 className="w-4 h-4 text-slate-500 group-hover:text-indigo-400" />
                             </button>
-                            <button onClick={() => { navigator.clipboard.writeText(p.body); setCopiedId(p.id); setTimeout(() => setCopiedId(null), 2000); }}>
+                            <button onClick={() => { 
+                              const textToCopy = editableContent[p.id] || p.body;
+                              navigator.clipboard.writeText(textToCopy); 
+                              setCopiedId(p.id); 
+                              setTimeout(() => setCopiedId(null), 2000); 
+                            }}>
                               {copiedId === p.id ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-slate-500 hover:text-indigo-400" />}
                             </button>
                           </div>
                         </div>
-                        {/* NEW: Image Preview */}
+                        
+                        {/* IMAGE PREVIEW WITH DOWNLOAD */}
                         {cardImages[p.id] && (
-                          <div className="mb-4 rounded-xl overflow-hidden border border-white/5 animate-in zoom-in-95">
+                          <div className="relative mb-4 rounded-xl overflow-hidden border border-white/5 group/img animate-in zoom-in-95">
                             <img src={cardImages[p.id]} alt="AI context" className="w-full h-40 object-cover" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                              <button 
+                                onClick={() => handleDownloadImage(p.name, cardImages[p.id])}
+                                className="bg-white/90 p-2 rounded-full text-black hover:bg-white transition-all scale-90 group-hover/img:scale-100"
+                              >
+                                <Download className="w-5 h-5" />
+                              </button>
+                            </div>
                           </div>
                         )}
-                        <div className="text-sm leading-relaxed whitespace-pre-wrap">{p.body}</div>
+
+                        {/* CONDITIONAL RENDER: Editor vs Body */}
+                        {editingPlatform === p.id ? (
+                          <textarea
+                            autoFocus
+                            className={`w-full flex-grow text-sm leading-relaxed p-4 rounded-xl border outline-none min-h-[150px] resize-none ${isDarkMode ? 'bg-black/40 border-indigo-500/50 text-slate-100' : 'bg-slate-50 border-indigo-200'}`}
+                            value={editableContent[p.id] || ''}
+                            onChange={(e) => setEditableContent({...editableContent, [p.id]: e.target.value})}
+                          />
+                        ) : (
+                          <div className="text-sm leading-relaxed whitespace-pre-wrap flex-grow">
+                            {editableContent[p.id] || p.body}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
