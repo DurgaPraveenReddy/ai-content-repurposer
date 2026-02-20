@@ -99,37 +99,50 @@ app.post("/api/generate", async (req, res) => {
 
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+
+    const styleDefinitions = {
+      Professional: "authoritative, insightful, and polished. Use industry jargon correctly and focus on ROI and value.",
+      Witty: "clever, engaging, and observant. Use wordplay, light humor, and relatable metaphors to make a point.",
+      Sarcastic: "dry, cynical, and biting. Use 'air quotes' in spirit, point out the obvious absurdities, and be unapologetically edgy."
+    };
+
     const prompt = `
-      You are a world-class Social Media Strategist with a ${style} persona. 
-      Repurpose the following source material into a multi-platform content strategy.
+      SYSTEM: You are a world-class Social Media Strategist. Your personality is strictly ${style.toUpperCase()}.
+      
+      STYLE GUIDE: Your writing must be ${styleDefinitions[style]}.
 
       SOURCE MATERIAL:
       "${finalSourceMaterial}"
 
-      CONSTRAINTS:
-      - Tone: Strictly ${style} throughout.
-      - Formatting: Use the EXACT markers below for the frontend to parse.
-      - Quality: Write ready-to-post copy, not summaries.
+      TASK:
+      Repurpose this material into 5 distinct posts. Every post must be a minimum of 150-200 words. 
+      DO NOT summarize. Provide high-value, ready-to-publish copy.
 
       |||LINKEDIN|||
-      **[Engaging Headline]**
-      [Professional yet ${style} post with bullet points and CTA]
+      **[Headline]**: Professional hook.
+      **[Body]**: 3-4 deep paragraphs. End with a question.
+      **[Required Tone]**: ${styleDefinitions[style]}
 
       |||TWITTER|||
-      **[Thread Hook]**
-      [Follow-up 2-3 tweet structure]
+      **[Hook]**: Viral thread starter.
+      **[Thread]**: A 5-tweet sequence. Each tweet must be 200+ characters.
+      **[Required Tone]**: Fast-paced, yet ${styleDefinitions[style]}
 
       |||YOUTUBE|||
-      **[Viral Title Suggestion]**
-      [Script outline and engaging video description]
+      **[Title]**: 3 high-CTR options.
+      **[Script Outline]**: Detailed Hook, Intro, 3 Value Points, and Outro.
+      **[Description]**: A 200-word SEO description.
+      **[Required Tone]**: Informative but strictly ${styleDefinitions[style]}
 
       |||FACEBOOK|||
-      **[Community Headline]**
-      [Detailed, relatable story-driven post]
+      **[Body]**: A long-form, 250-word story-driven post focused on community.
+      **[Required Tone]**: Relatable and ${styleDefinitions[style]}
 
       |||INSTAGRAM|||
-      **[Punchy Caption Heading]**
-      [Main caption with 5 niche hashtags]
+      **[Heading]**: Punchy first line.
+      **[Caption]**: A 3-paragraph "Educational" caption.
+      **[Hashtags]**: 5 niche hashtags.
+      **[Required Tone]**: Visually evocative and ${styleDefinitions[style]}
     `;
 
     const result = await model.generateContent(prompt);
@@ -141,7 +154,6 @@ app.post("/api/generate", async (req, res) => {
       userId: uid
     });
     
-    // Save to get the ID
     const savedGen = await newGeneration.save();
 
     user.generationCount += 1;
@@ -150,13 +162,93 @@ app.post("/api/generate", async (req, res) => {
     res.status(200).json({ 
       success: true, 
       data: aiResponse,
-      id: savedGen._id, // RETURN THE ID FOR THE FRONTEND TO TRACK
+      id: savedGen._id,
       usage: user.generationCount,
       lastReset: user.lastReset 
     });
   } catch (error) {
     console.error("Critical API Error:", error);
     res.status(500).json({ success: false, error: "Failed to generate content." });
+  }
+});
+
+// --- NEW: INDIVIDUAL CARD RE-ROLL (GEMINI 2.5 FLASH) ---
+
+app.post("/api/generate-single", async (req, res) => {
+  try {
+    const { topic, style, platform, uid } = req.body;
+    if (!uid) return res.status(401).json({ error: "Auth required" });
+
+    // --- NEW: USAGE TRACKING LOGIC ---
+    let user = await User.findOne({ uid });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const now = new Date();
+    const lastReset = new Date(user.lastReset);
+    const hoursSinceReset = (now - lastReset) / (1000 * 60 * 60);
+
+    // Reset if 24 hours passed
+    if (hoursSinceReset >= 24) {
+      user.generationCount = 0;
+      user.lastReset = now;
+    }
+
+    // Check limit
+    if (user.generationCount >= USAGE_LIMIT) {
+      return res.status(403).json({ 
+        success: false, 
+        error: `Daily limit reached (${USAGE_LIMIT}/${USAGE_LIMIT}).` 
+      });
+    }
+
+    const styleDefinitions = {
+      Professional: "authoritative, insightful, and polished. Use industry jargon correctly and focus on ROI and value.",
+      Witty: "clever, engaging, and observant. Use wordplay, light humor, and relatable metaphors to make a point.",
+      Sarcastic: "dry, cynical, and biting. Use 'air quotes' in spirit, point out the obvious absurdities, and be unapologetically edgy."
+    };
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const singlePrompt = `
+      SYSTEM: You are a world-class Social Media Strategist. 
+      Your personality is strictly ${style.toUpperCase()} (${styleDefinitions[style]}).
+
+      TASK: Rewrite the ${platform} section for: "${topic}".
+
+      CRITICAL INSTRUCTIONS:
+      1. NO MARKDOWN LISTS: Do not use asterisks (*), dashes (-), or bullet points.
+      2. NO BOLDING: Do not use double asterisks (**) for headers. Use plain text.
+      3. EXACT HEADERS: Use simple brackets like [Title], [Script Outline], [Hook], [Intro].
+      4. BLOCK TEXT: Write in full, conversational paragraphs.
+      5. TONE: Ensure the persona is ${styleDefinitions[style]} throughout.
+
+      PLATFORM STRUCTURE:
+      If LinkedIn: [Headline], [Body]
+      If Twitter: [Hook], [Thread]
+      If YouTube: [Title], [Script Outline] (containing [Hook], [Intro], [Value Points]), [Description]
+      If Facebook: [Body]
+      If Instagram: [Heading], [Caption], [Hashtags]
+
+      OUTPUT: Return ONLY the text content. No markers like |||${platform.toUpperCase()}|||. 
+    `;
+
+    const result = await model.generateContent(singlePrompt);
+    const aiResponse = await result.response.text();
+    const cleanResponse = aiResponse.replace(/\*\*/g, '').trim();
+
+    // --- NEW: INCREMENT USAGE ---
+    user.generationCount += 1;
+    await user.save();
+
+    res.status(200).json({ 
+      success: true, 
+      data: cleanResponse,
+      usage: user.generationCount, // Return updated usage to frontend
+      lastReset: user.lastReset
+    });
+  } catch (error) {
+    console.error("Single Gen Error:", error);
+    res.status(500).json({ error: "Failed to re-roll this card." });
   }
 });
 
@@ -196,7 +288,7 @@ app.post("/api/generate-image", async (req, res) => {
   }
 });
 
-// 2. GET HISTORY
+// GET HISTORY
 app.get('/api/history/:uid', async (req, res) => {
   try {
     const history = await Generation.find({ userId: req.params.uid }).sort({ createdAt: -1 });
@@ -214,7 +306,7 @@ app.get('/api/history/:uid', async (req, res) => {
   }
 });
 
-// --- NEW: UPDATE CONTENT (EDIT FEATURE) ---
+// UPDATE CONTENT (EDIT FEATURE)
 app.put('/api/history/:id', async (req, res) => {
   try {
     const { content } = req.body;
@@ -235,7 +327,7 @@ app.put('/api/history/:id', async (req, res) => {
   }
 });
 
-// 3. DELETE
+// DELETE
 app.delete('/api/history/:id', async (req, res) => {
   try {
     await Generation.findByIdAndDelete(req.params.id);

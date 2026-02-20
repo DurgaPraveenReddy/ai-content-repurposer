@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, Sparkles, Copy, Check, Linkedin, Twitter, 
   Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, 
-  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2, Download, Edit3, Save
+  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2, Download, Edit3, Save, RefreshCw
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -23,7 +23,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// --- NEW COMPONENT: Reset Countdown ---
+// --- COMPONENT: Reset Countdown ---
 const ResetCountdown = ({ lastReset }) => {
   const [timeLeft, setTimeLeft] = useState("");
 
@@ -87,10 +87,11 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [usage, setUsage] = useState({ current: 0, limit: 5, lastReset: null });
 
-  // --- NEW EDITING STATES ---
+  // EDITING & RE-ROLL STATES
   const [currentGenId, setCurrentGenId] = useState(null);
   const [editableContent, setEditableContent] = useState({});
   const [editingPlatform, setEditingPlatform] = useState(null);
+  const [cardReRolling, setCardReRolling] = useState({});
 
   // Image states
   const [cardImages, setCardImages] = useState({});
@@ -159,8 +160,8 @@ function App() {
     if (!topic || !user) return;
     setLoading(true);
     setContent(''); 
-    setEditableContent({}); // Reset edits
-    setCardImages({}); // Reset images
+    setEditableContent({}); 
+    setCardImages({}); 
     try {
       const response = await axios.post('http://localhost:5000/api/generate', { 
         topic, 
@@ -171,10 +172,8 @@ function App() {
       const aiResponse = response.data.data;
       setContent(aiResponse);
       
-      // Track ID from backend
       if (response.data.id) setCurrentGenId(response.data.id);
 
-      // Map response to editable state
       const parsed = parseContent(aiResponse);
       const initialEdits = {};
       parsed.forEach(p => initialEdits[p.id] = p.body);
@@ -192,7 +191,50 @@ function App() {
     }
   };
 
-  // --- NEW: SAVE TO BACKEND ---
+  // --- NEW: INDIVIDUAL CARD RE-ROLL ---
+  const handleReRollCard = async (platform) => {
+    if (!topic || !user) return;
+    setCardReRolling(prev => ({ ...prev, [platform.id]: true }));
+    try {
+      const response = await axios.post('http://localhost:5000/api/generate-single', { 
+        topic, 
+        style, 
+        platform: platform.name, 
+        uid: user.uid 
+      });
+      
+      const newBody = response.data.data;
+      setEditableContent(prev => ({ ...prev, [platform.id]: newBody }));
+
+      // --- NEW: UPDATE USAGE UI ---
+      if (response.data.usage !== undefined) {
+        setUsage(prev => ({
+          ...prev,
+          current: response.data.usage,
+          lastReset: response.data.lastReset || prev.lastReset
+        }));
+      }
+
+      if (currentGenId) {
+        const platforms = parseContent(content);
+        const updatedFullContent = platforms.map(p => {
+          const body = p.id === platform.id ? newBody : (editableContent[p.id] || p.body);
+          return `${p.marker}\n${body}`;
+        }).join('\n\n');
+
+        await axios.put(`http://localhost:5000/api/history/${currentGenId}`, {
+          content: updatedFullContent
+        });
+        setContent(updatedFullContent);
+      }
+    } catch (error) {
+      // Show the "Limit Reached" error if the backend blocks it
+      alert(error.response?.data?.error || "Individual re-roll failed.");
+    } finally {
+      setCardReRolling(prev => ({ ...prev, [platform.id]: false }));
+    }
+  };
+
   const handleUpdateContent = async (platformId) => {
     if (!currentGenId) return;
     try {
@@ -324,7 +366,6 @@ function App() {
                   setContent(item.content); 
                   setTopic(item.topic); 
                   setCurrentGenId(item._id);
-                  // Load edits from history
                   const parsed = parseContent(item.content);
                   const historyEdits = {};
                   parsed.forEach(p => historyEdits[p.id] = p.body);
@@ -413,11 +454,23 @@ function App() {
                 </div>
               ) : platformCards.length > 0 ? (
                 <div className="space-y-6">
-                  <div className="flex justify-end gap-4">
-                    <button onClick={handleCopyAll} className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 transition-colors">
-                      <Copy className="w-3 h-3" /> Copy Full Strategy
-                    </button>
+                  <div className="flex justify-between items-center px-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-400/60">Strategy Ready</p>
+                    <div className="flex items-center gap-6">
+                      {/* GLOBAL RE-ROLL */}
+                      <button 
+                        onClick={handleGenerate} 
+                        disabled={loading}
+                        className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-indigo-400 transition-all disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Re-Roll All
+                      </button>
+                      <button onClick={handleCopyAll} className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 transition-colors">
+                        <Copy className="w-3 h-3" /> Copy Full Strategy
+                      </button>
+                    </div>
                   </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in">
                     {platformCards.map((p) => (
                       <div key={p.id} className={`border rounded-[2rem] p-7 transition-all hover:translate-y-[-4px] flex flex-col ${isDarkMode ? 'bg-white/[0.03] border-white/10 shadow-xl' : 'bg-white border-slate-200 shadow-md'}`}>
@@ -427,7 +480,16 @@ function App() {
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            {/* NEW: Edit/Save Toggle */}
+                            {/* INDIVIDUAL CARD RE-ROLL */}
+                            <button 
+                              onClick={() => handleReRollCard(p)}
+                              disabled={cardReRolling[p.id] || loading}
+                              className="p-1.5 rounded-lg transition-colors hover:bg-white/5 text-slate-500 hover:text-indigo-400 disabled:opacity-30"
+                              title="Re-roll this card"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${cardReRolling[p.id] ? 'animate-spin text-indigo-400' : ''}`} />
+                            </button>
+
                             <button 
                               onClick={() => {
                                 if (editingPlatform === p.id) {
@@ -465,7 +527,6 @@ function App() {
                           </div>
                         </div>
                         
-                        {/* IMAGE PREVIEW WITH DOWNLOAD */}
                         {cardImages[p.id] && (
                           <div className="relative mb-4 rounded-xl overflow-hidden border border-white/5 group/img animate-in zoom-in-95">
                             <img src={cardImages[p.id]} alt="AI context" className="w-full h-40 object-cover" />
@@ -480,7 +541,6 @@ function App() {
                           </div>
                         )}
 
-                        {/* CONDITIONAL RENDER: Editor vs Body */}
                         {editingPlatform === p.id ? (
                           <textarea
                             autoFocus
@@ -489,7 +549,7 @@ function App() {
                             onChange={(e) => setEditableContent({...editableContent, [p.id]: e.target.value})}
                           />
                         ) : (
-                          <div className="text-sm leading-relaxed whitespace-pre-wrap flex-grow">
+                          <div className={`text-sm leading-relaxed whitespace-pre-wrap flex-grow transition-opacity ${cardReRolling[p.id] ? 'opacity-40' : 'opacity-100'}`}>
                             {editableContent[p.id] || p.body}
                           </div>
                         )}
