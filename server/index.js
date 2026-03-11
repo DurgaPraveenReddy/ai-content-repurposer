@@ -18,6 +18,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // --- CONFIGURATION ---
 const USAGE_LIMIT = 5; 
+const MODEL_NAME = "gemini-2.5-flash"; // Updated to lite as requested
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
@@ -56,7 +57,44 @@ async function scrapeUrlContent(url) {
   }
 }
 
-// 1. GENERATE WITH URL-TO-CONTENT & GEMINI 2.5 FLASH
+// --- NEW: PREVIEW LAYOUT ENGINE ---
+app.post("/api/preview-layout", async (req, res) => {
+  try {
+    // 1. Changed 'text' to 'content' to match your App.jsx
+    const { content, platform } = req.body;
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const prompt = `
+      Analyze the following ${platform} post text and return a JSON object with these fields:
+      - handle: A realistic username (e.g., "ContentPro")
+      - body: The main post content (cleaned of hashtags/meta headers)
+      - hashtags: An array of strings (the hashtags found)
+      - metadata: A short string (e.g., "Sponsored" or "2h ago")
+      - cta: A short call to action (e.g., "Learn More")
+
+      TEXT: "${content}"
+      
+      Return ONLY valid JSON.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+    const jsonString = responseText.replace(/```json|```/g, '').trim();
+    const structuredData = JSON.parse(jsonString);
+
+    // 2. Changed 'data' to 'layout' to match your App.jsx 'response.data.layout'
+    res.status(200).json({ 
+      success: true, 
+      layout: { ...structuredData } 
+    });
+  } catch (error) {
+    console.error("Preview Parser Error:", error);
+    res.status(500).json({ error: "Failed to parse preview layout" });
+  }
+});
+
+// 1. GENERATE WITH URL-TO-CONTENT
 app.post("/api/generate", async (req, res) => {
   try {
     const { topic, style, uid, email } = req.body;
@@ -97,7 +135,7 @@ app.post("/api/generate", async (req, res) => {
       }
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
 
     const styleDefinitions = {
@@ -172,14 +210,13 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-// --- NEW: INDIVIDUAL CARD RE-ROLL (GEMINI 2.5 FLASH) ---
+// --- INDIVIDUAL CARD RE-ROLL ---
 
 app.post("/api/generate-single", async (req, res) => {
   try {
     const { topic, style, platform, uid } = req.body;
     if (!uid) return res.status(401).json({ error: "Auth required" });
 
-    // --- NEW: USAGE TRACKING LOGIC ---
     let user = await User.findOne({ uid });
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -187,13 +224,11 @@ app.post("/api/generate-single", async (req, res) => {
     const lastReset = new Date(user.lastReset);
     const hoursSinceReset = (now - lastReset) / (1000 * 60 * 60);
 
-    // Reset if 24 hours passed
     if (hoursSinceReset >= 24) {
       user.generationCount = 0;
       user.lastReset = now;
     }
 
-    // Check limit
     if (user.generationCount >= USAGE_LIMIT) {
       return res.status(403).json({ 
         success: false, 
@@ -207,7 +242,7 @@ app.post("/api/generate-single", async (req, res) => {
       Sarcastic: "dry, cynical, and biting. Use 'air quotes' in spirit, point out the obvious absurdities, and be unapologetically edgy."
     };
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const singlePrompt = `
       SYSTEM: You are a world-class Social Media Strategist. 
@@ -236,14 +271,13 @@ app.post("/api/generate-single", async (req, res) => {
     const aiResponse = await result.response.text();
     const cleanResponse = aiResponse.replace(/\*\*/g, '').trim();
 
-    // --- NEW: INCREMENT USAGE ---
     user.generationCount += 1;
     await user.save();
 
     res.status(200).json({ 
       success: true, 
       data: cleanResponse,
-      usage: user.generationCount, // Return updated usage to frontend
+      usage: user.generationCount,
       lastReset: user.lastReset
     });
   } catch (error) {
@@ -258,7 +292,7 @@ app.post("/api/generate-image", async (req, res) => {
     const { text, uid } = req.body;
     if (!uid) return res.status(401).json({ error: "Auth required" });
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
     const promptEngineering = await model.generateContent(
       `Analyze: "${text.substring(0, 200)}". Create a 1-sentence prompt for a photorealistic AI image. Style: Professional photography, 8k, no text. Return only the prompt.`
     );

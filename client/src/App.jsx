@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, Sparkles, Copy, Check, Linkedin, Twitter, 
   Youtube, Zap, History, LayoutDashboard, Facebook, Instagram, Trash2, X, 
-  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2, Download, Edit3, Save, RefreshCw
+  Search, Moon, Sun, LogOut, Lock, Share2, Clock, Image as ImageIcon, Loader2, Download, Edit3, Save, RefreshCw, Eye, Globe, ThumbsUp, MessageSquare, Repeat, Heart, MessageCircle, MoreHorizontal
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -96,6 +96,10 @@ function App() {
   // Image states
   const [cardImages, setCardImages] = useState({});
   const [imageLoading, setImageLoading] = useState({});
+
+  // --- NEW: PREVIEW STATES ---
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState({});
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -191,7 +195,6 @@ function App() {
     }
   };
 
-  // --- NEW: INDIVIDUAL CARD RE-ROLL ---
   const handleReRollCard = async (platform) => {
     if (!topic || !user) return;
     setCardReRolling(prev => ({ ...prev, [platform.id]: true }));
@@ -206,7 +209,6 @@ function App() {
       const newBody = response.data.data;
       setEditableContent(prev => ({ ...prev, [platform.id]: newBody }));
 
-      // --- NEW: UPDATE USAGE UI ---
       if (response.data.usage !== undefined) {
         setUsage(prev => ({
           ...prev,
@@ -228,10 +230,173 @@ function App() {
         setContent(updatedFullContent);
       }
     } catch (error) {
-      // Show the "Limit Reached" error if the backend blocks it
       alert(error.response?.data?.error || "Individual re-roll failed.");
     } finally {
       setCardReRolling(prev => ({ ...prev, [platform.id]: false }));
+    }
+  };
+
+  // --- NEW: PREVIEW HANDLER ---
+const handleOpenPreview = async (platform, text, image) => {
+    setPreviewLoading(prev => ({ ...prev, [platform.id]: true }));
+    try {
+      // Sends 'content' and 'platform'
+      const response = await axios.post('http://localhost:5000/api/preview-layout', { 
+        platform: platform.name, 
+        content: text 
+      });
+      
+      // Matches the 'layout' key from backend
+      setPreviewData({ 
+        ...response.data.layout, 
+        image, 
+        platformId: platform.id 
+      });
+    } catch (err) {
+      console.error("Preview Error:", err);
+      alert("Could not structure preview.");
+    } finally {
+      setPreviewLoading(prev => ({ ...prev, [platform.id]: false }));
+    }
+  };
+
+
+const renderPreviewUI = () => {
+    if (!previewData) return null;
+    const { platformId, handle, body, image, hashtags, metadata, cta } = previewData;
+
+    switch (platformId) {
+      case 'linkedin':
+        return (
+          <div className="bg-white h-full flex flex-col font-sans text-slate-900">
+            <div className="p-3 flex items-center gap-2 border-b border-slate-100">
+              <div className="w-10 h-10 rounded bg-indigo-100 flex items-center justify-center font-bold text-indigo-600">{handle[0]}</div>
+              <div className="flex-1">
+                <p className="text-[13px] font-bold">{handle} <span className="text-slate-400 font-normal">• 1st</span></p>
+                <p className="text-[10px] text-slate-500">{metadata || "Professional Content Strategy"}</p>
+                <p className="text-[9px] text-slate-400 flex items-center gap-1">2h • <Globe className="w-2.5 h-2.5"/></p>
+              </div>
+              <MoreHorizontal className="text-slate-400 w-5 h-5"/>
+            </div>
+            <div className="p-3 text-[13px] leading-relaxed whitespace-pre-wrap">{body}</div>
+            {image && <img src={image} className="w-full object-cover max-h-56" alt="LI Content"/>}
+            <div className="p-2 border-t border-slate-100 mt-auto flex justify-around">
+              <div className="flex flex-col items-center gap-1"><ThumbsUp className="w-4 h-4 text-slate-400"/><span className="text-[9px]">Like</span></div>
+              <div className="flex flex-col items-center gap-1"><MessageSquare className="w-4 h-4 text-slate-400"/><span className="text-[9px]">Comment</span></div>
+              <div className="flex flex-col items-center gap-1"><Repeat className="w-4 h-4 text-slate-400"/><span className="text-[9px]">Repost</span></div>
+              <div className="flex flex-col items-center gap-1"><Send className="w-4 h-4 text-slate-400"/><span className="text-[9px]">Send</span></div>
+            </div>
+          </div>
+        );
+
+      case 'twitter':
+        return (
+          <div className="bg-white h-full flex flex-col font-sans p-4 text-slate-900">
+            <div className="flex gap-3">
+              <div className="w-11 h-11 rounded-full bg-black text-white flex items-center justify-center font-black">𝕏</div>
+              <div className="flex-1">
+                <p className="font-bold text-[14px]">{handle} <span className="font-normal text-slate-500">@{handle.toLowerCase().replace(/\s/g,'')}</span></p>
+                <p className="text-[14px] mt-1">{body}</p>
+                <div className="text-sky-500 flex flex-wrap gap-1 mt-2">
+                  {hashtags?.map(tag => <span key={tag}>#{tag}</span>)}
+                </div>
+                {image && <img src={image} className="mt-3 rounded-2xl border border-slate-100 w-full" alt="X Content"/>}
+                <div className="flex justify-between mt-4 text-slate-400 max-w-[200px]">
+                  <MessageCircle className="w-4 h-4"/><Repeat className="w-4 h-4"/><Heart className="w-4 h-4"/><Share2 className="w-4 h-4"/>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'instagram':
+        return (
+          <div className="bg-white h-full flex flex-col font-sans text-slate-900">
+            <div className="p-3 flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-purple-600 p-0.5">
+                <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-[10px] font-bold">
+                  {handle[0]}
+                </div>
+              </div>
+              <span className="text-xs font-bold">{handle.toLowerCase().replace(/\s/g,'_')}</span>
+              <MoreHorizontal className="ml-auto w-4 h-4" />
+            </div>
+            <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
+              {image ? <img src={image} className="w-full h-full object-cover" alt="IG Post"/> : <Instagram className="w-12 h-12 text-slate-300"/>}
+            </div>
+            <div className="p-3">
+              <div className="flex gap-4 mb-2">
+                <Heart className="w-6 h-6" />
+                <MessageCircle className="w-6 h-6" />
+                <Send className="w-6 h-6" />
+              </div>
+              <p className="text-xs font-bold mb-1">1,234 likes</p>
+              <div className="text-xs leading-snug">
+                <span className="font-bold mr-2">{handle.toLowerCase().replace(/\s/g,'_')}</span>
+                {body.substring(0, 150)}...
+                <span className="text-slate-400 block mt-1">more</span>
+              </div>
+              <div className="text-sky-800 text-[11px] mt-1">
+                 {hashtags?.map(tag => <span key={tag} className="mr-1">#{tag}</span>)}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'facebook':
+        return (
+          <div className="bg-white h-full flex flex-col font-sans text-slate-900">
+            <div className="p-3 flex items-center gap-2">
+              <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold">{handle[0]}</div>
+              <div>
+                <p className="text-sm font-bold">{handle}</p>
+                <p className="text-[11px] text-slate-500 flex items-center gap-1">Just now • <Globe className="w-3 h-3"/></p>
+              </div>
+            </div>
+            <div className="px-3 pb-3 text-sm leading-normal">{body}</div>
+            {image && <img src={image} className="w-full object-cover border-y border-slate-100" alt="FB Post"/>}
+            <div className="p-2 flex border-t border-slate-100 mt-2">
+               <div className="flex-1 flex justify-center items-center gap-2 py-1 hover:bg-slate-100 rounded text-slate-500"><ThumbsUp className="w-4 h-4"/> <span className="text-xs font-semibold">Like</span></div>
+               <div className="flex-1 flex justify-center items-center gap-2 py-1 hover:bg-slate-100 rounded text-slate-500"><MessageSquare className="w-4 h-4"/> <span className="text-xs font-semibold">Comment</span></div>
+               <div className="flex-1 flex justify-center items-center gap-2 py-1 hover:bg-slate-100 rounded text-slate-500"><Share2 className="w-4 h-4"/> <span className="text-xs font-semibold">Share</span></div>
+            </div>
+          </div>
+        );
+
+      case 'youtube':
+        return (
+          <div className="bg-white h-full flex flex-col font-sans text-slate-900">
+            <div className="relative aspect-video bg-slate-200">
+              {image ? <img src={image} className="w-full h-full object-cover" alt="YT Thumb"/> : <div className="w-full h-full flex items-center justify-center"><Youtube className="text-red-600 w-12 h-12"/></div>}
+              <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] px-1 rounded">10:42</div>
+            </div>
+            <div className="p-3">
+              <h3 className="font-bold text-[15px] leading-snug mb-2">{body.split('.')[0]}...</h3>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-full bg-slate-200"/>
+                <div className="flex-1">
+                  <p className="text-[12px] font-bold">{handle}</p>
+                  <p className="text-[10px] text-slate-500">{metadata || "1.2M subscribers"}</p>
+                </div>
+                <button className="bg-black text-white text-[11px] px-3 py-1.5 rounded-full font-bold">Subscribe</button>
+              </div>
+              <div className="bg-slate-100 rounded-xl p-3 text-[11px]">
+                <p className="font-bold mb-1">Description</p>
+                <p className="text-slate-600">{body.substring(0, 100)}...</p>
+              </div>
+            </div>
+          </div>
+        );
+
+      default:
+        return (
+          <div className="bg-white h-full p-6 flex flex-col items-center justify-center text-center text-slate-900">
+            <div className="w-16 h-16 rounded-3xl bg-indigo-600 mb-4 flex items-center justify-center text-white font-bold text-2xl">{platformId[0].toUpperCase()}</div>
+            <h3 className="font-bold mb-2">{handle}</h3>
+            <p className="text-xs text-slate-500 leading-relaxed mb-6">{body.substring(0, 150)}...</p>
+            <div className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold">{cta || "View Post"}</div>
+          </div>
+        );
     }
   };
 
@@ -342,6 +507,27 @@ function App() {
       
       {progress > 0 && (
         <div className="fixed top-0 left-0 h-1 bg-indigo-500 z-[100] transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
+      )}
+
+      {/* --- NEW: PREVIEW MODAL --- */}
+      {previewData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in">
+           <button onClick={() => setPreviewData(null)} className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all group">
+             <X className="text-white group-hover:rotate-90 transition-transform"/>
+           </button>
+           
+           <div className="relative w-[320px] h-[640px] bg-black rounded-[3rem] border-[8px] border-slate-800 shadow-2xl overflow-hidden flex flex-col scale-90 md:scale-100">
+              {/* Phone Notch */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-6 bg-slate-800 rounded-b-2xl z-20"></div>
+              
+              <div className="flex-1 overflow-y-auto bg-slate-50 pt-8 custom-scrollbar">
+                {renderPreviewUI()}
+              </div>
+
+              {/* Phone Home Bar */}
+              <div className="h-1.5 w-24 bg-slate-800 rounded-full mx-auto mb-2 mt-auto"></div>
+           </div>
+        </div>
       )}
 
       {showHistory && (
@@ -457,7 +643,6 @@ function App() {
                   <div className="flex justify-between items-center px-2">
                     <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-400/60">Strategy Ready</p>
                     <div className="flex items-center gap-6">
-                      {/* GLOBAL RE-ROLL */}
                       <button 
                         onClick={handleGenerate} 
                         disabled={loading}
@@ -480,7 +665,15 @@ function App() {
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{p.name}</span>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            {/* INDIVIDUAL CARD RE-ROLL */}
+                            {/* NEW: PREVIEW BUTTON */}
+                            <button 
+                              onClick={() => handleOpenPreview(p, editableContent[p.id] || p.body, cardImages[p.id])}
+                              className="p-1.5 rounded-lg transition-colors hover:bg-white/5 text-slate-500 hover:text-indigo-400"
+                              title="Visual Preview"
+                            >
+                              {previewLoading[p.id] ? <Loader2 className="w-4 h-4 animate-spin"/> : <Eye className="w-4 h-4"/>}
+                            </button>
+
                             <button 
                               onClick={() => handleReRollCard(p)}
                               disabled={cardReRolling[p.id] || loading}
