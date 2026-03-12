@@ -16,9 +16,9 @@ app.use(cors());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- CONFIGURATION ---
+// CONFIGURATION
 const USAGE_LIMIT = 5; 
-const MODEL_NAME = "gemini-2.5-flash"; // Updated to lite as requested
+const MODEL_NAME = "gemini-2.5-flash";
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
@@ -57,13 +57,13 @@ async function scrapeUrlContent(url) {
   }
 }
 
-// --- NEW: PREVIEW LAYOUT ENGINE ---
+// PREVIEW LAYOUT ENGINE
 app.post("/api/preview-layout", async (req, res) => {
   try {
-    // 1. Changed 'text' to 'content' to match your App.jsx
+    // Changed 'text' to 'content' to match App.jsx
     const { content, platform } = req.body;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const prompt = `
       Analyze the following ${platform} post text and return a JSON object with these fields:
@@ -83,7 +83,7 @@ app.post("/api/preview-layout", async (req, res) => {
     const jsonString = responseText.replace(/```json|```/g, '').trim();
     const structuredData = JSON.parse(jsonString);
 
-    // 2. Changed 'data' to 'layout' to match your App.jsx 'response.data.layout'
+    // 2. Changed 'data' to 'layout' to match App.jsx 'response.data.layout'
     res.status(200).json({ 
       success: true, 
       layout: { ...structuredData } 
@@ -94,7 +94,7 @@ app.post("/api/preview-layout", async (req, res) => {
   }
 });
 
-// 1. GENERATE WITH URL-TO-CONTENT
+// GENERATE WITH URL-TO-CONTENT
 app.post("/api/generate", async (req, res) => {
   try {
     const { topic, style, uid, email } = req.body;
@@ -123,20 +123,20 @@ app.post("/api/generate", async (req, res) => {
     }
 
     let finalSourceMaterial = topic;
-    let isUrl = false;
+    let dbTopic = topic; 
     
     if (topic.trim().toLowerCase().startsWith('http')) {
-      isUrl = true;
       const scraped = await scrapeUrlContent(topic.trim());
       if (scraped) {
         finalSourceMaterial = `TITLE: ${scraped.title}\n\nCONTENT: ${scraped.bodyText}`;
+        dbTopic = scraped.title; 
       } else {
         finalSourceMaterial = `The user provided this URL: ${topic}. I couldn't scrape the live text, so please generate the strategy based on your general knowledge of this link/domain or its likely content.`;
+        dbTopic = topic;
       }
     }
 
     const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-
 
     const styleDefinitions = {
       Professional: "authoritative, insightful, and polished. Use industry jargon correctly and focus on ROI and value.",
@@ -155,6 +155,12 @@ app.post("/api/generate", async (req, res) => {
       TASK:
       Repurpose this material into 5 distinct posts. Every post must be a minimum of 150-200 words. 
       DO NOT summarize. Provide high-value, ready-to-publish copy.
+
+      CRITICAL FORMATTING RULES:
+      1. Use the EXACT markers below to separate platforms.
+      2. Do NOT include any introductory or concluding remarks (e.g., "Here is your content").
+      3. Start the response immediately with the first marker.
+      4. Each post must be 150-200 words of deep-dive content.
 
       |||LINKEDIN|||
       **[Headline]**: Professional hook.
@@ -187,7 +193,7 @@ app.post("/api/generate", async (req, res) => {
     const aiResponse = await result.response.text();
 
     const newGeneration = new Generation({
-      topic: isUrl ? "Article Repurposed" : topic,
+      topic: dbTopic,
       content: aiResponse,
       userId: uid
     });
@@ -210,7 +216,7 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-// --- INDIVIDUAL CARD RE-ROLL ---
+// INDIVIDUAL CARD RE-ROLL
 
 app.post("/api/generate-single", async (req, res) => {
   try {
@@ -245,27 +251,31 @@ app.post("/api/generate-single", async (req, res) => {
     const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const singlePrompt = `
-      SYSTEM: You are a world-class Social Media Strategist. 
-      Your personality is strictly ${style.toUpperCase()} (${styleDefinitions[style]}).
+          SYSTEM: You are a world-class Social Media Strategist. 
+          Your personality is strictly ${style.toUpperCase()} (${styleDefinitions[style]}).
 
-      TASK: Rewrite the ${platform} section for: "${topic}".
+          TASK: Rewrite a high-value, deep-dive ${platform} post for: "${topic}".
 
-      CRITICAL INSTRUCTIONS:
-      1. NO MARKDOWN LISTS: Do not use asterisks (*), dashes (-), or bullet points.
-      2. NO BOLDING: Do not use double asterisks (**) for headers. Use plain text.
-      3. EXACT HEADERS: Use simple brackets like [Title], [Script Outline], [Hook], [Intro].
-      4. BLOCK TEXT: Write in full, conversational paragraphs.
-      5. TONE: Ensure the persona is ${styleDefinitions[style]} throughout.
+          CRITICAL CONTENT REQUIREMENTS:
+          1. DEPTH: The content must be a minimum of 150-200 words. 
+          2. NO SUMMARIES: Do not just summarize the topic. Provide ready-to-publish, insightful copy.
+          3. STRUCTURE: Use 3-4 deep, conversational paragraphs.
+          4. TONE: Maintain a ${styleDefinitions[style]} voice throughout.
 
-      PLATFORM STRUCTURE:
-      If LinkedIn: [Headline], [Body]
-      If Twitter: [Hook], [Thread]
-      If YouTube: [Title], [Script Outline] (containing [Hook], [Intro], [Value Points]), [Description]
-      If Facebook: [Body]
-      If Instagram: [Heading], [Caption], [Hashtags]
+          FORMATTING INSTRUCTIONS:
+          1. NO MARKDOWN LISTS: Do not use asterisks (*), dashes (-), or bullet points.
+          2. NO BOLDING: Do not use double asterisks (**) for headers. Use plain text.
+          3. EXACT HEADERS: Use simple brackets like [Title], [Headline], or [Body].
 
-      OUTPUT: Return ONLY the text content. No markers like |||${platform.toUpperCase()}|||. 
-    `;
+          PLATFORM STRUCTURE:
+          If LinkedIn: [Headline], [Body] (3-4 deep paragraphs ending with a question)
+          If Twitter: [Hook], [Thread] (A 5-tweet sequence, each tweet 200+ characters)
+          If YouTube: [Title], [Script Outline] (Detailed Hook, Intro, 3 Value Points), [Description] (200-word SEO description)
+          If Facebook: [Body] (250-word story-driven post)
+          If Instagram: [Heading], [Caption] (3-paragraph educational caption), [Hashtags]
+
+          OUTPUT: Return ONLY the text content. No markers like |||${platform.toUpperCase()}|||. 
+        `;
 
     const result = await model.generateContent(singlePrompt);
     const aiResponse = await result.response.text();

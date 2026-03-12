@@ -10,20 +10,23 @@ import axios from 'axios';
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
 const firebaseConfig = {
-  apiKey: "AIzaSyDynCUi0DZK0E2I_kYIh18SsCD8PfGBQVY",
-  authDomain: "ai-content-repurposer-a7ef5.firebaseapp.com",
-  projectId: "ai-content-repurposer-a7ef5",
-  storageBucket: "ai-content-repurposer-a7ef5.firebasestorage.app",
-  messagingSenderId: "129917352375",
-  appId: "1:129917352375:web:94909cb349324a8c999032"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// --- COMPONENT: Reset Countdown ---
+// COMPONENT: Reset Countdown
 const ResetCountdown = ({ lastReset }) => {
   const [timeLeft, setTimeLeft] = useState("");
 
@@ -97,7 +100,7 @@ function App() {
   const [cardImages, setCardImages] = useState({});
   const [imageLoading, setImageLoading] = useState({});
 
-  // --- NEW: PREVIEW STATES ---
+  // NEW: PREVIEW STATES
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState({});
 
@@ -150,9 +153,16 @@ function App() {
       { id: 'facebook', name: 'Facebook', icon: <Facebook className="w-4 h-4 text-[#1877F2]" />, marker: "|||FACEBOOK|||" },
       { id: 'instagram', name: 'Instagram', icon: <Instagram className="w-4 h-4 text-[#E4405F]" />, marker: "|||INSTAGRAM|||" }
     ];
+
     return platforms.map(p => {
-      if (text.includes(p.marker)) {
-        let section = text.split(p.marker)[1].split("|||")[0].trim();
+      // We use a Case-Insensitive check and trim the results
+      const escapedMarker = p.marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`${escapedMarker}\\s*([\\s\\S]*?)(?=\\|\\|\\||$)`, 'i');
+      const match = text.match(regex);
+
+      if (match && match[1]) {
+        let section = match[1].trim();
+        // Remove double asterisks that Gemini loves to include
         section = section.replace(/\*\*(.*?)\*\*/g, '$1').trim();
         return { ...p, body: section };
       }
@@ -167,7 +177,7 @@ function App() {
     setEditableContent({}); 
     setCardImages({}); 
     try {
-      const response = await axios.post('http://localhost:5000/api/generate', { 
+      const response = await axios.post(`${API_BASE_URL}/api/generate`, { 
         topic, 
         style, 
         uid: user.uid, 
@@ -199,7 +209,7 @@ function App() {
     if (!topic || !user) return;
     setCardReRolling(prev => ({ ...prev, [platform.id]: true }));
     try {
-      const response = await axios.post('http://localhost:5000/api/generate-single', { 
+      const response = await axios.post(`${API_BASE_URL}/api/generate-single`, { 
         topic, 
         style, 
         platform: platform.name, 
@@ -224,7 +234,7 @@ function App() {
           return `${p.marker}\n${body}`;
         }).join('\n\n');
 
-        await axios.put(`http://localhost:5000/api/history/${currentGenId}`, {
+        await axios.put(`${API_BASE_URL}/api/history/${currentGenId}`, {
           content: updatedFullContent
         });
         setContent(updatedFullContent);
@@ -236,12 +246,12 @@ function App() {
     }
   };
 
-  // --- NEW: PREVIEW HANDLER ---
+  // NEW: PREVIEW HANDLER
 const handleOpenPreview = async (platform, text, image) => {
     setPreviewLoading(prev => ({ ...prev, [platform.id]: true }));
     try {
       // Sends 'content' and 'platform'
-      const response = await axios.post('http://localhost:5000/api/preview-layout', { 
+      const response = await axios.post(`${API_BASE_URL}/api/preview-layout`, { 
         platform: platform.name, 
         content: text 
       });
@@ -409,7 +419,7 @@ const renderPreviewUI = () => {
         return `${p.marker}\n${body}`;
       }).join('\n\n');
 
-      await axios.put(`http://localhost:5000/api/history/${currentGenId}`, {
+      await axios.put(`${API_BASE_URL}/api/history/${currentGenId}`, {
         content: updatedFullContent
       });
       
@@ -423,7 +433,7 @@ const renderPreviewUI = () => {
   const handleGenerateImage = async (platformId, platformText) => {
     setImageLoading(prev => ({ ...prev, [platformId]: true }));
     try {
-      const res = await axios.post('http://localhost:5000/api/generate-image', {
+      const res = await axios.post(`${API_BASE_URL}/api/generate-image`, {
         text: platformText,
         uid: user.uid
       });
@@ -447,7 +457,7 @@ const renderPreviewUI = () => {
   const fetchHistory = async (uid) => {
     try {
       const targetUid = uid || user?.uid;
-      const response = await axios.get(`http://localhost:5000/api/history/${targetUid}`);
+      const response = await axios.get(`${API_BASE_URL}/api/history/${targetUid}`);
       if (response.data.success) {
         setHistoryData(response.data.data);
         setUsage({ 
@@ -466,7 +476,7 @@ const renderPreviewUI = () => {
     e.stopPropagation();
     if (!window.confirm("Delete forever?")) return;
     try {
-      await axios.delete(`http://localhost:5000/api/history/${id}`);
+      await axios.delete(`${API_BASE_URL}/api/history/${id}`);
       setHistoryData(prev => prev.filter(item => item._id !== id));
     } catch (error) {
       console.error(error);
@@ -509,7 +519,7 @@ const renderPreviewUI = () => {
         <div className="fixed top-0 left-0 h-1 bg-indigo-500 z-[100] transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
       )}
 
-      {/* --- NEW: PREVIEW MODAL --- */}
+      {/* PREVIEW MODAL */}
       {previewData && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in">
            <button onClick={() => setPreviewData(null)} className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all group">
@@ -557,7 +567,7 @@ const renderPreviewUI = () => {
                   parsed.forEach(p => historyEdits[p.id] = p.body);
                   setEditableContent(historyEdits);
                   setCardImages({}); 
-                  setShowHistory(false); 
+                  setShowHistory(false);
                 }} className={`p-5 mb-3 rounded-2xl border flex justify-between items-center group cursor-pointer ${isDarkMode ? 'bg-white/[0.02] border-white/5 hover:bg-indigo-600/10' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
                   <span className="font-semibold capitalize">{item.topic}</span>
                   <button onClick={(e) => handleDelete(e, item._id)} className="p-2 text-slate-500 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
@@ -572,7 +582,7 @@ const renderPreviewUI = () => {
         <header className={`flex justify-between items-center mb-12 border-b ${isDarkMode ? 'border-white/5' : 'border-slate-200'} pb-6`}>
           <div className="flex items-center gap-3">
             <Zap className="w-8 h-8 text-indigo-500" />
-            <h1 className="text-2xl font-black uppercase tracking-tighter">AI Hub</h1>
+            <h1 className="text-2xl font-black uppercase tracking-tighter">Forgely</h1>
           </div>
           
           <div className="flex items-center gap-4">
@@ -624,7 +634,7 @@ const renderPreviewUI = () => {
                   {loading ? (
                     <><Sparkles className="w-4 h-4 animate-spin" /> Thinking...</>
                   ) : (
-                    <><Send className="w-4 h-4" /> Generate Plan</>
+                    <><Send className="w-4 h-4" /> Generate</>
                   )}
                 </button>
               </div>
