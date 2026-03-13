@@ -13,19 +13,19 @@ const User = require('./models/User');
 const app = express();
 
 const allowedOrigins = [
-  'http://localhost:5173', // For local testing
-  'https://your-frontend-app.vercel.app'
+  'http://localhost:5173', 
+  process.env.FRONTEND_URL
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    // This checks if the request is coming from Localhost or Vercel URL
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS blocked: Origin not allowed'), false);
     }
-    return callback(null, true);
   }
 }));
 
