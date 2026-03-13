@@ -1,6 +1,6 @@
 # ⚡ Forgely | AI-Powered Content Repurposing Engine
 
-**Forgely** is a sophisticated full-stack SaaS application designed to transform long-form content (URLs or raw topics) into a comprehensive multi-platform social media strategy in seconds. Built with the MERN stack and powered by **Google Gemini 2.5 Flash**, it automates the "forging" of raw ideas into polished, platform-specific posts.
+**Forgely** is a sophisticated full-stack SaaS application designed to transform long-form content (URLs or raw topics) into a comprehensive multi-platform social media strategy in seconds. Built with the MERN stack and powered by **Google Gemini**, it automates the "forging" of raw ideas into polished, platform-specific posts.
 
 
 
